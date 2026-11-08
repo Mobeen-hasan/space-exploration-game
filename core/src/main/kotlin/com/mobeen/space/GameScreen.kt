@@ -20,7 +20,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
-class GameScreen : ScreenAdapter() {
+class GameScreen(private val game: SpaceGame, private val state: GameState) : ScreenAdapter() {
     private val camera = OrthographicCamera()
     private val viewport = ExtendViewport(1280f, 720f, camera)
     private val hudCamera = OrthographicCamera()
@@ -31,16 +31,16 @@ class GameScreen : ScreenAdapter() {
     private val font = BitmapFont().apply { region.texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear) }
     private val glyphs = GlyphLayout()
 
-    private val ship = Ship()
+    private val ship = state.ship
     private val controls = Controls()
     private val chase = ChaseCamera(camera)
     private val starfield = Starfield()
     private val particles = Particles()
     private val planetRenderer = PlanetRenderer()
-    private val field = PlanetField()
+    private val field = state.field
 
     private val nearby = ArrayList<Planet>()
-    private val discovered = HashSet<Long>()
+    private val discovered = state.discovered
 
     private var time = 0f
     private var accumulator = 0f
@@ -64,7 +64,16 @@ class GameScreen : ScreenAdapter() {
 
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
+        controls.thrustLabel = "THRUST"
+        controls.showBrake = true
+        controls.actionEnabled = ship.landedOn != null
+        controls.actionLabel = "EXIT"
         controls.update(w, h)
+        val landedPlanet = ship.landedOn
+        if (controls.actionPressed && landedPlanet != null) {
+            game.enterSurface(landedPlanet)
+            return
+        }
         field.near(ship.pos.x, ship.pos.y, RADAR_RANGE, nearby)
 
         accumulator += dt
@@ -255,7 +264,7 @@ class GameScreen : ScreenAdapter() {
 
         shapes.begin(ShapeType.Filled)
         drawRadar(w, h)
-        drawTouchControls()
+        TouchHud.drawShapes(shapes, controls)
         panelLines?.let { drawPanelBackground(it, h) }
         shapes.end()
 
@@ -316,33 +325,6 @@ class GameScreen : ScreenAdapter() {
         shapes.set(ShapeType.Filled)
     }
 
-    private fun drawTouchControls() {
-        val c = controls
-        // Thrust
-        shapes.setColor(1f, 0.6f, 0.2f, if (c.thrustHeld) 0.45f else 0.16f)
-        shapes.circle(c.thrustCenter.x, c.thrustCenter.y, c.thrustRadius, 40)
-        // Brake
-        shapes.setColor(0.4f, 0.8f, 1f, if (c.brakeHeld) 0.45f else 0.16f)
-        shapes.circle(c.brakeCenter.x, c.brakeCenter.y, c.brakeRadius, 32)
-        // Joystick
-        if (c.joyActive) {
-            shapes.setColor(1f, 1f, 1f, 0.12f)
-            shapes.circle(c.joyOrigin.x, c.joyOrigin.y, c.joyRadius, 40)
-            val dx = c.joyPos.x - c.joyOrigin.x
-            val dy = c.joyPos.y - c.joyOrigin.y
-            val d = hypot(dx, dy)
-            val k = if (d > c.joyRadius) c.joyRadius / d else 1f
-            shapes.setColor(1f, 1f, 1f, 0.35f)
-            shapes.circle(c.joyOrigin.x + dx * k, c.joyOrigin.y + dy * k, c.joyRadius * 0.4f, 24)
-        }
-        shapes.set(ShapeType.Line)
-        shapes.setColor(1f, 0.6f, 0.2f, 0.5f)
-        shapes.circle(c.thrustCenter.x, c.thrustCenter.y, c.thrustRadius, 40)
-        shapes.setColor(0.4f, 0.8f, 1f, 0.5f)
-        shapes.circle(c.brakeCenter.x, c.brakeCenter.y, c.brakeRadius, 32)
-        shapes.set(ShapeType.Filled)
-    }
-
     private fun planetLines(p: Planet): List<String> = listOf(
         if (p.id in discovered) "LANDED  -  ${p.name}" else "LANDED  -  ${p.name}",
         "Type: ${p.type.label}",
@@ -351,7 +333,7 @@ class GameScreen : ScreenAdapter() {
         "Temperature: ${p.temperatureC} C",
         "Atmosphere: ${p.atmosphere}",
         "Day length: ${"%.1f".format(p.dayHours)} h",
-        "Hold THRUST to take off",
+        "E / EXIT: explore the surface    Hold THRUST: take off",
     )
 
     private fun panelMetrics(lines: List<String>, h: Float): FloatArray {
@@ -400,10 +382,7 @@ class GameScreen : ScreenAdapter() {
             }
         }
 
-        // Button labels
-        font.setColor(1f, 1f, 1f, 0.8f)
-        label("THRUST", controls.thrustCenter.x, controls.thrustCenter.y)
-        label("BRAKE", controls.brakeCenter.x, controls.brakeCenter.y)
+        TouchHud.drawLabels(batch, font, glyphs, controls)
 
         // Toast
         val t = toast
@@ -420,11 +399,6 @@ class GameScreen : ScreenAdapter() {
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, margin + lh * 1.5f)
         }
-    }
-
-    private fun label(text: String, cx: Float, cy: Float) {
-        glyphs.setText(font, text)
-        font.draw(batch, text, cx - glyphs.width / 2f, cy + glyphs.height / 2f)
     }
 
     override fun dispose() {

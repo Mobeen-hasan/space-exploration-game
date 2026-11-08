@@ -20,4 +20,9 @@ kotlin {
 
 dependencies {
     api("com.badlogicgames.gdx:gdx:$gdxVersion")
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }

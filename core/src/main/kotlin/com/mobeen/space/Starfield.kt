@@ -50,13 +50,13 @@ class Starfield(seed: Long = 7L) {
     }
 
     /** Call between shapes.begin() and shapes.end(), with the world camera's projection. */
-    fun draw(shapes: ShapeRenderer, camX: Float, camY: Float, zoom: Float, time: Float) {
+    fun draw(shapes: ShapeRenderer, camX: Float, camY: Float, zoom: Float, time: Float, alpha: Float = 1f) {
         // Nebulae: stacked translucent discs approximate a soft gradient.
         for (n in nebulae) {
             val x = camX + wrap(n.x - camX * NEBULA_FACTOR, NEBULA_TILE)
             val y = camY + wrap(n.y - camY * NEBULA_FACTOR, NEBULA_TILE)
             for (k in 0 until 6) {
-                shapes.setColor(n.r, n.g, n.b, 0.014f)
+                shapes.setColor(n.r, n.g, n.b, 0.014f * alpha)
                 shapes.circle(x, y, n.radius * (1f - k * 0.15f), 40)
             }
         }
@@ -67,7 +67,7 @@ class Starfield(seed: Long = 7L) {
                 val x = camX + wrap(layer.xs[i] - camX * layer.factor, TILE)
                 val y = camY + wrap(layer.ys[i] - camY * layer.factor, TILE)
                 val twinkle = 0.75f + 0.25f * sin(time * 1.5f + layer.phase[i])
-                val a = layer.brightness * twinkle
+                val a = layer.brightness * twinkle * alpha
                 val w = layer.warm[i]
                 shapes.setColor(0.75f + 0.25f * w, 0.8f + 0.1f * w, 1f - 0.3f * w, a)
                 shapes.rect(x - s / 2f, y - s / 2f, s, s)
