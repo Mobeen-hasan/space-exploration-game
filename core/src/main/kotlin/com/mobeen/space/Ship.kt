@@ -31,15 +31,19 @@ class Ship {
     val headingX get() = cos(angle)
     val headingY get() = sin(angle)
 
-    fun update(c: Controls, dt: Float) {
+    val landAngleRad get() = landAngle
+
+    /** [thrustEnabled] is false when the ship is out of fuel or wrecked. */
+    fun update(c: Controls, dt: Float, thrustEnabled: Boolean = true) {
         if (noLandTimer > 0f) noLandTimer -= dt
+        val thrustInput = if (thrustEnabled) c.thrust else 0f
 
         val planet = landedOn
         if (planet != null) {
             thrusting = 0f
             angle = landAngle
-            if (c.thrust < 0.05f) thrustReleasedSinceLanding = true
-            if (thrustReleasedSinceLanding && c.thrust > 0.1f) takeOff(planet)
+            if (thrustInput < 0.05f) thrustReleasedSinceLanding = true
+            if (thrustReleasedSinceLanding && thrustInput > 0.1f) takeOff(planet)
             return
         }
 
@@ -54,7 +58,7 @@ class Ship {
         }
 
         // Engine
-        thrusting = c.thrust
+        thrusting = thrustInput
         if (thrusting > 0f) {
             vel.add(headingX * THRUST * thrusting * dt, headingY * THRUST * thrusting * dt)
         }
@@ -64,6 +68,21 @@ class Ship {
         if (vel.len2() > MAX_SPEED * MAX_SPEED) vel.setLength(MAX_SPEED)
 
         pos.add(vel.x * dt, vel.y * dt)
+    }
+
+    /** Put the ship back in flight from saved data. */
+    fun restore(px: Float, py: Float, vx: Float, vy: Float, heading: Float) {
+        landedOn = null
+        pos.set(px, py)
+        vel.set(vx, vy)
+        angle = heading
+        thrusting = 0f
+    }
+
+    /** Put the ship back on a planet from saved data. */
+    fun restoreLanded(planet: Planet, surfaceAngle: Float) {
+        land(planet, cos(surfaceAngle), sin(surfaceAngle))
+        thrustReleasedSinceLanding = false
     }
 
     fun land(planet: Planet, nx: Float, ny: Float) {

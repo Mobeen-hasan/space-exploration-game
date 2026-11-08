@@ -1,6 +1,7 @@
 package com.mobeen.space
 
 import com.badlogic.gdx.Gdx
+import com.badlogic.gdx.Input
 import com.badlogic.gdx.ScreenAdapter
 import com.badlogic.gdx.graphics.GL20
 import com.badlogic.gdx.graphics.OrthographicCamera
@@ -52,6 +53,13 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         chase.snapTo(ship)
     }
 
+    override fun show() {
+        state.pendingNotice?.let {
+            showToast(it)
+            state.pendingNotice = null
+        }
+    }
+
     override fun resize(width: Int, height: Int) {
         viewport.update(width, height)
         hudViewport.update(width, height, true)
@@ -64,14 +72,27 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
 
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
+
+        state.clock += dt
+        state.stats.tickBody(dt)
+        if (state.stats.collapsed) {
+            game.collapse()
+            return
+        }
+
         controls.thrustLabel = "THRUST"
         controls.showBrake = true
-        controls.actionEnabled = ship.landedOn != null
-        controls.actionLabel = "EXIT"
+        controls.showThrust = true
+        controls.actionEnabled = true
+        controls.actionLabel = if (ship.landedOn != null) "EXIT" else "INSIDE"
         controls.update(w, h)
         val landedPlanet = ship.landedOn
-        if (controls.actionPressed && landedPlanet != null) {
-            game.enterSurface(landedPlanet)
+        if (controls.actionPressed) {
+            if (landedPlanet != null) game.enterSurface(landedPlanet) else game.enterInterior(InteriorScreen.COCKPIT_SPAWN)
+            return
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.I)) {
+            game.enterInterior(InteriorScreen.COCKPIT_SPAWN)
             return
         }
         field.near(ship.pos.x, ship.pos.y, RADAR_RANGE, nearby)
@@ -109,7 +130,16 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             }
         }
 
-        ship.update(controls, dt)
+        val stats = state.stats
+        val canThrust = stats.fuel > 0f && stats.hull > 0f
+        if (!canThrust && controls.thrust > 0f && toastTimer <= 0f) {
+            showToast(
+                if (stats.fuel <= 0f) "Out of fuel! Press I to open the ship terminal."
+                else "Hull wrecked! Repair it at the ship terminal (press I).",
+            )
+        }
+        ship.update(controls, dt, canThrust)
+        if (ship.thrusting > 0f) stats.fuel = max(0f, stats.fuel - Stats.FUEL_BURN * ship.thrusting * dt)
         emitExhaust(dt)
         particles.update(dt)
 
@@ -132,7 +162,11 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
                 if (vn < 0f) {
                     ship.vel.x -= 1.45f * vn * nx
                     ship.vel.y -= 1.45f * vn * ny
-                    if (speed >= Ship.LAND_SPEED) showToast("Too fast to land! Brake below ${Ship.LAND_SPEED.toInt()}")
+                    if (speed >= Ship.LAND_SPEED) {
+                        val damage = (speed - Ship.LAND_SPEED) * HULL_DAMAGE_PER_SPEED
+                        state.stats.hull = max(0f, state.stats.hull - damage)
+                        showToast("Hull damage! Brake below ${Ship.LAND_SPEED.toInt()} to land.")
+                    }
                 }
                 ship.pos.set(p.x + nx * minD, p.y + ny * minD)
             }
@@ -266,10 +300,21 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         drawRadar(w, h)
         TouchHud.drawShapes(shapes, controls)
         panelLines?.let { drawPanelBackground(it, h) }
+        val barH = font.lineHeight
+        val gap = barH * 0.25f
+        val barX = h * 0.03f
+        val barY = h * 0.03f + barH * 3f
+        StatsHud.drawShapes(shapes, state.stats, barX, barY, barH * 9f, barH, gap, showAir = false, showShip = true, time = time)
         shapes.end()
 
         batch.begin()
         drawHudText(w, h, panelLines)
+        StatsHud.drawLabels(batch, font, state.stats, barX, barY, barH, gap, showAir = false, showShip = true)
+        font.setColor(1f, 0.9f, 0.5f, 1f)
+        font.draw(
+            batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}",
+            barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true) + barH * 0.4f,
+        )
         batch.end()
     }
 
@@ -412,6 +457,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         const val STEP = 1f / 120f
         const val RADAR_RANGE = 5000f
         const val EXHAUST_RATE = 160f
+        const val HULL_DAMAGE_PER_SPEED = 0.08f
         const val LIGHT_X = -0.55f
         const val LIGHT_Y = 0.75f
     }

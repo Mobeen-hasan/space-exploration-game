@@ -49,6 +49,7 @@ class Controls {
     // Per-screen configuration.
     var thrustLabel = "THRUST"
     var showBrake = true
+    var showThrust = true
     var actionEnabled = false
     var actionLabel = ""
 
@@ -106,7 +107,7 @@ class Controls {
             val y = h - input.getY(i).toFloat()
             if (owner[i] == NONE) {
                 owner[i] = when {
-                    inside(x, y, thrustCenter, thrustRadius * 1.15f) -> THRUST
+                    showThrust && inside(x, y, thrustCenter, thrustRadius * 1.15f) -> THRUST
                     showBrake && inside(x, y, brakeCenter, brakeRadius * 1.15f) -> BRAKE
                     actionEnabled && inside(x, y, actionCenter, actionRadius * 1.2f) -> ACTION
                     x < w * 0.55f -> {

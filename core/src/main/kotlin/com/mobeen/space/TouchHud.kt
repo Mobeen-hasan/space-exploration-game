@@ -11,8 +11,10 @@ import kotlin.math.hypot
 object TouchHud {
     /** Call inside shapes.begin(Filled) with the HUD projection. Leaves the shape type as Filled. */
     fun drawShapes(shapes: ShapeRenderer, c: Controls) {
-        shapes.setColor(1f, 0.6f, 0.2f, if (c.thrustHeld) 0.45f else 0.16f)
-        shapes.circle(c.thrustCenter.x, c.thrustCenter.y, c.thrustRadius, 40)
+        if (c.showThrust) {
+            shapes.setColor(1f, 0.6f, 0.2f, if (c.thrustHeld) 0.45f else 0.16f)
+            shapes.circle(c.thrustCenter.x, c.thrustCenter.y, c.thrustRadius, 40)
+        }
         if (c.showBrake) {
             shapes.setColor(0.4f, 0.8f, 1f, if (c.brakeHeld) 0.45f else 0.16f)
             shapes.circle(c.brakeCenter.x, c.brakeCenter.y, c.brakeRadius, 32)
@@ -32,8 +34,10 @@ object TouchHud {
             shapes.circle(c.joyOrigin.x + dx * k, c.joyOrigin.y + dy * k, c.joyRadius * 0.4f, 24)
         }
         shapes.set(ShapeType.Line)
-        shapes.setColor(1f, 0.6f, 0.2f, 0.5f)
-        shapes.circle(c.thrustCenter.x, c.thrustCenter.y, c.thrustRadius, 40)
+        if (c.showThrust) {
+            shapes.setColor(1f, 0.6f, 0.2f, 0.5f)
+            shapes.circle(c.thrustCenter.x, c.thrustCenter.y, c.thrustRadius, 40)
+        }
         if (c.showBrake) {
             shapes.setColor(0.4f, 0.8f, 1f, 0.5f)
             shapes.circle(c.brakeCenter.x, c.brakeCenter.y, c.brakeRadius, 32)
@@ -48,7 +52,7 @@ object TouchHud {
     /** Call inside batch.begin() with the HUD projection. */
     fun drawLabels(batch: SpriteBatch, font: BitmapFont, glyphs: GlyphLayout, c: Controls) {
         font.setColor(1f, 1f, 1f, 0.8f)
-        label(batch, font, glyphs, c.thrustLabel, c.thrustCenter.x, c.thrustCenter.y)
+        if (c.showThrust) label(batch, font, glyphs, c.thrustLabel, c.thrustCenter.x, c.thrustCenter.y)
         if (c.showBrake) label(batch, font, glyphs, "BRAKE", c.brakeCenter.x, c.brakeCenter.y)
         if (c.actionEnabled) label(batch, font, glyphs, c.actionLabel, c.actionCenter.x, c.actionCenter.y)
     }

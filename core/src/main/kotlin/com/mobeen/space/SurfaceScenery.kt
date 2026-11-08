@@ -444,34 +444,9 @@ class SurfaceScenery(private val planet: Planet, private val terrain: Terrain) {
         shapes.rect(sx - 6f, gy + 22f, 12f, 24f)
     }
 
-    /** A small space-cowboy: coat, scarf, hat. Feet rest at (p.x, p.y). */
+    /** The player figure. Feet rest at (p.x, p.y). */
     fun drawPlayer(shapes: ShapeRenderer, p: SurfacePlayer) {
-        val f = p.facing.toFloat()
-        val x = p.x
-        val y = p.y
-        val swing = if (p.grounded) sin(p.walkTime * 12f) * 6f else 4f
-        val hipY = y + 17f
-
-        col(shapes, 0.10f, 0.10f, 0.16f)
-        shapes.rectLine(x, hipY, x + swing, y + max(0f, -swing * 0.3f), 4.2f)
-        shapes.rectLine(x, hipY, x - swing, y + max(0f, swing * 0.3f), 4.2f)
-
-        col(shapes, 0.72f, 0.26f, 0.20f)
-        shapes.triangle(x - 6f, y + 31f, x + 6f, y + 31f, x - 8f, y + 10f)
-        shapes.triangle(x + 6f, y + 31f, x + 8f, y + 10f, x - 8f, y + 10f)
-
-        col(shapes, 0.62f, 0.20f, 0.16f)
-        shapes.rectLine(x, y + 29f, x + f * 4f + swing * 0.5f, y + 19f, 3.4f)
-
-        col(shapes, 0.95f, 0.75f, 0.20f)
-        shapes.rectLine(x - 5f, y + 30.5f, x + 5f, y + 30.5f, 2.6f)
-
-        col(shapes, 0.92f, 0.74f, 0.62f)
-        shapes.circle(x + f * 0.5f, y + 34.5f, 5.2f, 12)
-
-        col(shapes, 0.14f, 0.11f, 0.10f)
-        shapes.rectLine(x - 8.5f, y + 38.5f, x + 8.5f, y + 38.5f, 2.2f)
-        shapes.rect(x - 4.5f, y + 38.5f, 9f, 6f)
+        CharacterArt.draw(shapes, p.x, p.y, p.facing, p.walkTime, p.grounded, tint)
     }
 
     /** Soft lantern glow around the player at night. Call with additive blending. */

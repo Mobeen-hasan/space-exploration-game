@@ -5,3 +5,7 @@ build/
 local.properties
 .DS_Store
 *.apk
+
+# JVM crash reports
+hs_err_pid*.log
+replay_pid*.log

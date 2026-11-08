@@ -21,6 +21,8 @@ kotlin {
 dependencies {
     api("com.badlogicgames.gdx:gdx:$gdxVersion")
     testImplementation(kotlin("test"))
+    testImplementation("com.badlogicgames.gdx:gdx-backend-headless:$gdxVersion")
+    testImplementation("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop")
 }
 
 tasks.test {

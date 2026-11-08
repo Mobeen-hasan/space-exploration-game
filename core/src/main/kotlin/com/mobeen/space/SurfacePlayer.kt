@@ -34,11 +34,11 @@ class SurfacePlayer(private val planet: Planet) {
     fun inLiquid(terrain: Terrain): Boolean =
         terrain.liquid != Liquid.NONE && y + 12f < terrain.liquidLevel
 
-    fun update(c: Controls, terrain: Terrain, dt: Float) {
+    fun update(c: Controls, terrain: Terrain, dt: Float, walkScale: Float = 1f) {
         val wet = inLiquid(terrain)
 
         // Horizontal movement
-        val target = c.moveX * WALK_SPEED * (if (wet) 0.55f else 1f)
+        val target = c.moveX * WALK_SPEED * walkScale * (if (wet) 0.55f else 1f)
         val accel = if (grounded) 2600f else 1000f
         vx = approach(vx, target, accel * dt)
         if (c.moveX > 0.1f) facing = 1 else if (c.moveX < -0.1f) facing = -1

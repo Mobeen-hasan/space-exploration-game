@@ -48,12 +48,24 @@ class SurfaceScreen(
     /** Real seconds for one in-game day on this planet. */
     private val dayDuration = 90f + planet.dayHours * 3f
     private var dayPhase = 0.4f // late morning
+    private var toast: String? = null
+    private var toastTimer = 0f
+    private var hurtFlash = 0f
+    private var lastHealth = state.stats.health
 
     init {
-        player.spawn(terrain, 70f)
+        player.spawn(terrain, 55f)
         camX = player.x
         camY = player.y + CAMERA_RISE
         camera.zoom = ZOOM
+    }
+
+    override fun show() {
+        state.pendingNotice?.let {
+            toast = it
+            toastTimer = 4f
+            state.pendingNotice = null
+        }
     }
 
     override fun resize(width: Int, height: Int) {
@@ -64,8 +76,22 @@ class SurfaceScreen(
     override fun render(delta: Float) {
         val dt = min(delta, 0.05f)
         time += dt
-        dayPhase = (dayPhase + dt / dayDuration) % 1f
+        if (toastTimer > 0f) toastTimer -= dt
+        state.clock += dt
+        dayPhase = (0.4f + state.clock / dayDuration) % 1f
         scenery.update(dayPhase)
+
+        val stats = state.stats
+        stats.tickBody(dt)
+        val submerged = terrain.liquid != Liquid.NONE && player.y < terrain.liquidLevel - 2f
+        stats.tickSurface(dt, planet, terrain.liquid, submerged)
+        if (stats.health < lastHealth - 0.0001f) hurtFlash = min(0.45f, hurtFlash + (lastHealth - stats.health) * 0.12f)
+        lastHealth = stats.health
+        hurtFlash = max(0f, hurtFlash - dt * 0.8f)
+        if (stats.collapsed) {
+            game.collapse()
+            return
+        }
 
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
@@ -77,13 +103,14 @@ class SurfaceScreen(
         controls.actionLabel = "BOARD"
         controls.update(w, h)
         if (controls.actionPressed && nearShip) {
-            game.returnToSpace()
+            game.enterInterior(InteriorScreen.AIRLOCK_SPAWN)
             return
         }
 
+        val walkScale = if (stats.energy < 20f) 0.7f else 1f
         accumulator += dt
         while (accumulator >= STEP) {
-            player.update(controls, terrain, STEP)
+            player.update(controls, terrain, STEP, walkScale)
             accumulator -= STEP
         }
 
@@ -160,11 +187,27 @@ class SurfaceScreen(
         font.data.setScale(max(0.8f, h / 720f * 1.05f))
         additive(false)
         shapes.begin(ShapeType.Filled)
+        if (hurtFlash > 0.01f) {
+            shapes.setColor(0.9f, 0.05f, 0.05f, hurtFlash)
+            shapes.rect(0f, 0f, w, h)
+        }
         TouchHud.drawShapes(shapes, controls)
+        val barH = font.lineHeight
+        val gap = barH * 0.25f
+        val barX = h * 0.03f
+        val barY = h * 0.03f + barH * 3f
+        StatsHud.drawShapes(shapes, state.stats, barX, barY, barH * 9f, barH, gap, showAir = true, showShip = false, time = time)
         shapes.end()
 
         batch.begin()
         drawText(w, h, nearShip)
+        StatsHud.drawLabels(batch, font, state.stats, barX, barY, barH, gap, showAir = true, showShip = false)
+        font.setColor(1f, 0.9f, 0.5f, 1f)
+        font.draw(
+            batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}",
+            barX, barY + StatsHud.stackHeight(barH, gap, showAir = true, showShip = false) + barH * 0.4f,
+        )
+        drawWarnings(w, h)
         batch.end()
     }
 
@@ -195,6 +238,32 @@ class SurfaceScreen(
             val hint = "A / D: walk    W / Space: jump    Touch: left stick walks, JUMP button jumps"
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, margin + lh * 1.5f)
+        }
+    }
+
+    private fun drawWarnings(w: Float, h: Float) {
+        val lh = font.lineHeight
+        val margin = h * 0.03f
+        var y = h - margin - lh * 5f
+        val stats = state.stats
+        if (stats.suffocating) {
+            font.setColor(1f, 0.3f, 0.25f, 1f)
+            font.draw(batch, "SUIT AIR EMPTY - get back to the ship!", margin, y)
+            y -= lh
+        } else if (stats.air < 25f && Hazards.airDrain(planet.type) > 0f) {
+            font.setColor(1f, 0.8f, 0.3f, 1f)
+            font.draw(batch, "Suit air running low", margin, y)
+            y -= lh
+        }
+        if (Hazards.exposureDamage(planet.temperatureC) > 0f) {
+            font.setColor(1f, 0.6f, 0.3f, 1f)
+            font.draw(batch, if (planet.temperatureC > 0) "Extreme heat is hurting you" else "Extreme cold is hurting you", margin, y)
+        }
+        val t = toast
+        if (t != null && toastTimer > 0f) {
+            font.setColor(1f, 0.9f, 0.5f, min(1f, toastTimer))
+            glyphs.setText(font, t)
+            font.draw(batch, t, (w - glyphs.width) / 2f, h - margin - lh)
         }
     }
 
