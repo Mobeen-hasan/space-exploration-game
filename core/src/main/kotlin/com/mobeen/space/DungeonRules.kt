@@ -133,7 +133,10 @@ class DungeonRun(
     var facingY = 0
 
     /** Consumables carried. Mods and plating apply as soon as they are picked up. */
-    val pack = ArrayList<ItemType>().also { p -> repeat(STARTING_MEDKITS) { p.add(ItemType.MEDKIT) } }
+    val pack = ArrayList<ItemType>().also { p ->
+        repeat(STARTING_MEDKITS) { p.add(ItemType.MEDKIT) }
+        repeat(STARTING_STIMS) { p.add(ItemType.STIM) }
+    }
     var weaponBonus = 0
         private set
     var armor = STARTING_ARMOR
@@ -219,24 +222,6 @@ class DungeonRun(
     fun waitTurn() {
         if (dead || exited) return
         endTurn()
-    }
-
-    /**
-     * Rest in place for up to [maxTurns] turns. Stops when fully healed, when something is hunting you,
-     * or the moment you take damage. Returns how many turns passed.
-     */
-    fun rest(maxTurns: Int = REST_TURNS): Int {
-        var turns = 0
-        while (turns < maxTurns && !dead && !exited) {
-            if (state.stats.health >= Stats.MAX) break
-            if (visibleMonsters().any { it.state == AiState.HUNTING }) break
-            val before = state.stats.health
-            endTurn()
-            turns++
-            if (state.stats.health < before) break
-        }
-        if (turns > 0) log("You rest for $turns turns.")
-        return turns
     }
 
     fun useItem(index: Int): Boolean {
@@ -505,10 +490,10 @@ class DungeonRun(
         const val AMBUSH_MULTIPLIER = 3 // hitting a sleeping monster
         const val PACK_SIZE = 6
         const val STARTING_MEDKITS = 2
+        const val STARTING_STIMS = 1
         const val STARTING_ARMOR = 1 // a ship-issue vest
         const val MEDKIT_HEAL = 50f
-        const val TURNS_PER_REGEN = 3
-        const val REST_TURNS = 20
+        const val TURNS_PER_REGEN = 4
         const val TURN_SECONDS = 1.2f
     }
 }

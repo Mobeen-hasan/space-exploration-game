@@ -20,9 +20,13 @@ object DungeonGenerator {
 
     /**
      * [boss] is the contract whose target hides on the last floor. Without one the last floor has no boss
-     * and holds a cash cache instead.
+     * and holds a cash cache instead. [difficulty] is 0 for plain scavenging and 1 to 3 for a contract's
+     * tier; it sets how many monsters there are, how tough, and how many are awake.
      */
-    fun generate(planet: Planet, depth: Int, maxDepth: Int, rnd: Random, boss: Contract? = null): Level {
+    fun generate(
+        planet: Planet, depth: Int, maxDepth: Int, rnd: Random,
+        boss: Contract? = null, difficulty: Int = boss?.tier ?: 0,
+    ): Level {
         val level = Level(W, H)
 
         val rooms = ArrayList<Room>()
@@ -67,9 +71,9 @@ object DungeonGenerator {
             level.set(level.downX, level.downY, Tile.STAIRS_DOWN)
         }
 
-        addHazards(level, planet, rooms, start, end, rnd)
-        addMonsters(level, depth, maxDepth, rooms, start, end, rnd, boss)
-        addItems(level, depth, maxDepth, rooms, start, end, rnd, boss)
+        addHazards(level, planet, rooms, start, end, rnd, difficulty)
+        addMonsters(level, planet, depth, maxDepth, rooms, start, end, rnd, boss, difficulty)
+        addItems(level, depth, maxDepth, rooms, start, end, rnd, boss, difficulty)
         return level
     }
 
@@ -102,11 +106,12 @@ object DungeonGenerator {
     }
 
     /** Pools stay one tile away from the walls, so there is always a safe ring around them. */
-    private fun addHazards(level: Level, planet: Planet, rooms: List<Room>, start: Room, end: Room, rnd: Random) {
+    private fun addHazards(level: Level, planet: Planet, rooms: List<Room>, start: Room, end: Room, rnd: Random, difficulty: Int) {
         val tile = hazardFor(planet.type) ?: return
+        val chance = RuinsDifficulty.hazardChance(planet.type, difficulty)
         for (r in rooms) {
             if (r === start || r === end || r.w < 5 || r.h < 5) continue
-            if (rnd.nextFloat() > 0.5f) continue
+            if (rnd.nextFloat() > chance) continue
             val pw = rnd.nextInt(2, min(4, r.w - 2) + 1)
             val ph = rnd.nextInt(2, min(3, r.h - 2) + 1)
             val px = r.x + 1 + rnd.nextInt(0, r.w - 2 - pw + 1)
@@ -137,19 +142,19 @@ object DungeonGenerator {
         return null
     }
 
-    private fun addMonsters(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random, boss: Contract?) {
+    private fun addMonsters(
+        level: Level, planet: Planet, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room,
+        rnd: Random, boss: Contract?, difficulty: Int,
+    ) {
         val others = rooms.filter { it !== start }
-        val table: List<Pair<MonsterType, Int>> = when (depth) {
-            1 -> listOf(MonsterType.SCUTTLER to 60, MonsterType.HUSK to 40)
-            2 -> listOf(MonsterType.SCUTTLER to 30, MonsterType.HUSK to 35, MonsterType.SPITTER to 25, MonsterType.BRUTE to 10)
-            else -> listOf(MonsterType.SCUTTLER to 20, MonsterType.HUSK to 25, MonsterType.SPITTER to 30, MonsterType.BRUTE to 25)
-        }
-        val hpScale = 1f + 0.2f * (depth - 1)
-        val dmgScale = 1f + 0.12f * (depth - 1)
-        repeat(2 + depth * 2) {
+        val table = RuinsDifficulty.monsterWeights(depth, difficulty, planet.type)
+        val hpScale = (1f + 0.2f * (depth - 1)) * RuinsDifficulty.hpMultiplier(difficulty)
+        val dmgScale = (1f + 0.12f * (depth - 1)) * RuinsDifficulty.dmgMultiplier(difficulty)
+        val asleep = RuinsDifficulty.sleepChance(difficulty)
+        repeat(RuinsDifficulty.monsterCount(depth, difficulty)) {
             val spot = randomFloorIn(level, others, rnd) ?: return@repeat
             val type = pick(rnd, table)
-            val state = if (rnd.nextFloat() < 0.8f) AiState.SLEEPING else AiState.WANDERING
+            val state = if (rnd.nextFloat() < asleep) AiState.SLEEPING else AiState.WANDERING
             level.monsters.add(Monster(type, spot.first, spot.second, (type.hp * hpScale).toInt(), dmgScale, state))
         }
         if (depth == maxDepth && boss != null) {
@@ -161,9 +166,9 @@ object DungeonGenerator {
         }
     }
 
-    private fun addItems(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random, boss: Contract?) {
+    private fun addItems(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random, boss: Contract?, difficulty: Int) {
         val table = listOf(
-            ItemType.MEDKIT to 40, ItemType.RATION to 18, ItemType.STIM to 15,
+            ItemType.MEDKIT to 45, ItemType.RATION to 18, ItemType.STIM to 22,
             ItemType.CREDITS to 25, ItemType.BATON_MOD to 5, ItemType.ARMOR_PLATE to 5,
         )
         fun place(type: ItemType) {
@@ -172,8 +177,9 @@ object DungeonGenerator {
             level.items.add(FloorItem(type, spot.first, spot.second, amount))
         }
         place(ItemType.MEDKIT) // always at least one way to heal
+        if (depth == maxDepth) place(ItemType.MEDKIT) // and a second one before the last fight
         if (depth >= 2) place(ItemType.RATION)
-        repeat(3 + rnd.nextInt(0, 3)) { place(pick(rnd, table)) }
+        repeat(3 + rnd.nextInt(0, 3) + RuinsDifficulty.extraLoot(difficulty)) { place(pick(rnd, table)) }
         if (depth == maxDepth && boss == null) { // no target down here: a stash to make the trip worthwhile
             level.items.add(FloorItem(ItemType.CREDITS, end.cx, end.cy, rnd.nextInt(80, 151)))
             repeat(2) { place(pick(rnd, table)) }
@@ -182,4 +188,54 @@ object DungeonGenerator {
 
     /** Smallest distance in tiles between two points, moving in eight directions. */
     fun distance(ax: Int, ay: Int, bx: Int, by: Int): Int = max(abs(ax - bx), abs(ay - by))
+}
+
+/**
+ * How hard a trip into the ruins is. [difficulty] is 0 for plain scavenging and 1 to 3 for a contract's tier;
+ * harder trips have more monsters, tougher ones, and fewer asleep. The planet type changes what lives there.
+ */
+object RuinsDifficulty {
+    private val hp = floatArrayOf(1.0f, 1.05f, 1.1f, 1.25f)
+    private val dmg = floatArrayOf(1.0f, 1.0f, 1.03f, 1.1f)
+    private val asleep = floatArrayOf(0.80f, 0.75f, 0.72f, 0.62f)
+
+    private fun level(difficulty: Int) = difficulty.coerceIn(0, 3)
+
+    fun hpMultiplier(difficulty: Int) = hp[level(difficulty)]
+    fun dmgMultiplier(difficulty: Int) = dmg[level(difficulty)]
+    fun sleepChance(difficulty: Int) = asleep[level(difficulty)]
+    fun monsterCount(depth: Int, difficulty: Int) = 2 + depth * 2 + (if (level(difficulty) >= 3) 1 else 0)
+    fun extraLoot(difficulty: Int) = (level(difficulty) + 1) / 2
+
+    /** Chance that a roomy chamber holds a hazard pool, on worlds that have one. */
+    fun hazardChance(type: PlanetType, difficulty: Int): Float {
+        val base = if (type == PlanetType.LAVA || type == PlanetType.TOXIC) 0.7f else 0.5f
+        return base + 0.05f * level(difficulty)
+    }
+
+    /** Which monsters can appear, and how likely each is, for this floor, danger level and world. */
+    fun monsterWeights(depth: Int, difficulty: Int, type: PlanetType): List<Pair<MonsterType, Int>> {
+        val w = linkedMapOf(MonsterType.SCUTTLER to 0, MonsterType.HUSK to 0, MonsterType.SPITTER to 0, MonsterType.BRUTE to 0)
+        when (depth) {
+            1 -> { w[MonsterType.SCUTTLER] = 60; w[MonsterType.HUSK] = 40 }
+            2 -> { w[MonsterType.SCUTTLER] = 30; w[MonsterType.HUSK] = 35; w[MonsterType.SPITTER] = 25; w[MonsterType.BRUTE] = 10 }
+            else -> { w[MonsterType.SCUTTLER] = 20; w[MonsterType.HUSK] = 25; w[MonsterType.SPITTER] = 30; w[MonsterType.BRUTE] = 25 }
+        }
+        val d = level(difficulty)
+        if (d > 0) { // higher stakes bring heavier hitters and fewer weaklings
+            if (depth >= 2) w[MonsterType.BRUTE] = w.getValue(MonsterType.BRUTE) + d * 4
+            w[MonsterType.SPITTER] = w.getValue(MonsterType.SPITTER) + d * 2
+            w[MonsterType.SCUTTLER] = maxOf(5, w.getValue(MonsterType.SCUTTLER) - d * 4)
+        }
+        fun add(m: MonsterType, n: Int) { w[m] = w.getValue(m) + n }
+        when (type) { // what lives on each kind of world
+            PlanetType.LAVA -> add(MonsterType.SPITTER, 15)
+            PlanetType.TOXIC -> add(MonsterType.SCUTTLER, 15)
+            PlanetType.ICE -> if (depth >= 2) add(MonsterType.BRUTE, 12)
+            PlanetType.DESERT -> { add(MonsterType.HUSK, 10); add(MonsterType.SCUTTLER, 8) }
+            PlanetType.ROCKY -> add(MonsterType.HUSK, 5)
+            PlanetType.OCEAN -> add(MonsterType.SPITTER, 8)
+        }
+        return w.entries.filter { it.value > 0 }.map { it.key to it.value }
+    }
 }

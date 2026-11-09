@@ -232,11 +232,12 @@ class InteriorScreen(
         )
     }
 
-    /** One line of facts about a contract: the crime, the world, and how far away it is. */
+    /** Two lines of facts about a contract: the crime, then the world and how dangerous the trip is. */
     private fun contractDetail(c: Contract): String {
         val planet = SaveCodec.planetFromId(c.planetId)
         val world = if (planet != null) "${c.planetType.label} world, ${planet.temperatureC} C" else "${c.planetType.label} world"
-        return "Wanted for: ${c.crime}.  $world, ${"%.1f".format(c.distance / 1000f)}k away."
+        return "Wanted for: ${c.crime}.\n$world, ${"%.1f".format(c.distance / 1000f)}k away.  " +
+            "Danger: ${c.danger} (${BountyGenerator.dangerNote(c.planetType)})"
     }
 
     private fun bountyOptions(): List<Option> {
@@ -309,7 +310,7 @@ class InteriorScreen(
         val lh = font.lineHeight
         val rh = lh * 1.9f
         val mw = min(w * 0.94f, lh * 34f)
-        val ph = rh * count + lh * 5.6f
+        val ph = rh * count + lh * 6.6f
         return floatArrayOf((w - mw) / 2f, h / 2f - ph / 2f, mw, ph)
     }
 
@@ -453,7 +454,7 @@ class InteriorScreen(
         }
         options.getOrNull(menuSel)?.detail?.let {
             font.setColor(1f, 0.9f, 0.55f, 1f)
-            font.draw(batch, it, p[0] + lh, p[1] + lh * 2.6f)
+            font.draw(batch, it, p[0] + lh, p[1] + lh * 3.7f)
         }
         font.setColor(0.6f, 0.8f, 0.7f, 0.9f)
         font.draw(batch, "W/S or arrows: choose    E / Enter: select    Esc: back", p[0] + lh, p[1] + lh * 1.2f)

@@ -18,8 +18,11 @@ class Contract(
     val reward: Int,
     val tier: Int,
 ) {
+    /** How dangerous the whole trip is, in words. */
+    val danger: String get() = when (tier) { 1 -> "Low"; 2 -> "Moderate"; else -> "High" }
+
     /** One line for lists. */
-    fun summary(): String = "$target  -  $planetName  -  $reward cr  -  Tier $tier"
+    fun summary(): String = "$target  -  $planetName  -  $reward cr  -  Tier $tier ($danger)"
 
     fun encode(): String = listOf(id, target, crime, planetId, planetName, planetType.name, distance, reward, tier).joinToString("|")
 
@@ -39,10 +42,10 @@ class Contract(
         }
 
         /** The target's health multiplier for a tier. */
-        fun hpScale(tier: Int): Float = when (tier) { 1 -> 1.0f; 2 -> 1.15f; else -> 1.3f }
+        fun hpScale(tier: Int): Float = when (tier) { 1 -> 1.0f; 2 -> 1.08f; else -> 1.18f }
 
         /** The target's damage multiplier for a tier. */
-        fun dmgScale(tier: Int): Float = when (tier) { 1 -> 1.0f; 2 -> 1.08f; else -> 1.15f }
+        fun dmgScale(tier: Int): Float = when (tier) { 1 -> 1.0f; 2 -> 1.03f; else -> 1.08f }
     }
 }
 
@@ -116,6 +119,16 @@ object BountyGenerator {
         PlanetType.DESERT -> 30
         PlanetType.ROCKY -> 20
         PlanetType.OCEAN -> 0
+    }
+
+    /** What to expect down there, in a few words. */
+    fun dangerNote(type: PlanetType): String = when (type) {
+        PlanetType.LAVA -> "lava pools and spitters"
+        PlanetType.TOXIC -> "acid pools and swarms"
+        PlanetType.ICE -> "heavy brutes"
+        PlanetType.DESERT -> "husks and swarms"
+        PlanetType.ROCKY -> "a mixed crowd"
+        PlanetType.OCEAN -> "spitters"
     }
 
     fun reward(tier: Int, distance: Int, type: PlanetType): Int {

@@ -206,10 +206,11 @@ class DungeonTest {
     }
 
     @Test
-    fun youStartWithTwoMedkits() {
+    fun youStartWithMedkitsAndAStim() {
         val (run, _) = newRun()
-        assertEquals(List(DungeonRun.STARTING_MEDKITS) { ItemType.MEDKIT }, run.pack)
-        assertEquals(2, DungeonRun.STARTING_MEDKITS)
+        assertEquals(2, run.pack.count { it == ItemType.MEDKIT })
+        assertEquals(1, run.pack.count { it == ItemType.STIM })
+        assertTrue(run.pack.size <= DungeonRun.PACK_SIZE)
     }
 
     @Test
@@ -218,26 +219,8 @@ class DungeonTest {
         clearArena(run)
         state.stats.health = 50f
         repeat(30) { run.waitTurn() }
-        assertTrue(state.stats.health > 58f, "30 calm turns should heal at least 8, but health is ${state.stats.health}")
-    }
-
-    @Test
-    fun restingHealsAndStopsWhenFullOrWhenSomethingHuntsYou() {
-        val (run, state) = newRun()
-        clearArena(run)
-        state.stats.health = 40f
-        val turns = run.rest()
-        assertTrue(turns in 1..DungeonRun.REST_TURNS)
-        assertTrue(state.stats.health > 40f)
-
-        state.stats.health = Stats.MAX
-        assertEquals(0, run.rest(), "nothing to heal")
-
-        state.stats.health = 40f
-        val hunter = Monster(MonsterType.SPITTER, run.px + 4, run.py, 18, 1f, AiState.HUNTING)
-        run.level.monsters.add(hunter)
-        Fov.compute(run.level, run.px, run.py)
-        assertEquals(0, run.rest(), "no resting with a hunter in sight")
+        assertTrue(state.stats.health > 55f, "30 calm turns should heal a little, but health is ${state.stats.health}")
+        assertTrue(state.stats.health < 75f, "recovery should be slow, but health is ${state.stats.health}")
     }
 
     @Test
@@ -511,14 +494,20 @@ class DungeonTest {
      * rests when safe, grabs items it can see, then takes the stairs. It knows where the stairs are,
      * which a real player has to find, but it never skips a fight.
      */
-    private fun playThrough(run: DungeonRun, state: GameState, maxActions: Int = 4000): Boolean {
+    private fun playThrough(run: DungeonRun, state: GameState, maxActions: Int = 6000): Boolean {
         var actions = 0
-        while (actions++ < maxActions && !run.dead && !run.exited && !run.completed) {
+        while (actions++ < maxActions && !run.dead && !run.exited) {
             val lv = run.level
             val stats = state.stats
+            if (run.completed) return true
+            if (run.contract == null && run.depth == run.maxDepth && lv.monsters.isEmpty()) return true // cleared it
 
             if (stats.health < 45f) {
                 val i = run.pack.indexOf(ItemType.MEDKIT)
+                if (i >= 0 && run.useItem(i)) continue
+            }
+            if (stats.energy < 25f) {
+                val i = run.pack.indexOf(ItemType.STIM)
                 if (i >= 0 && run.useItem(i)) continue
             }
             val adjacent = lv.monsters.firstOrNull {
@@ -529,7 +518,10 @@ class DungeonTest {
                 run.tryMove(adjacent.x - run.px, adjacent.y - run.py)
                 continue
             }
-            if (run.visibleMonsters().none { it.state == AiState.HUNTING } && stats.health < 75f && run.rest() > 0) continue
+            if (run.visibleMonsters().none { it.state == AiState.HUNTING } && stats.health < 60f) {
+                run.waitTurn() // catch a breath: recovery is slow, so this costs food and energy
+                continue
+            }
 
             fun stepToward(tx: Int, ty: Int): Boolean {
                 var route = Pathfinder.path(lv, run.px, run.py, tx, ty, true, false) { bx, by -> lv.monsterAt(bx, by) != null }
@@ -543,7 +535,7 @@ class DungeonTest {
                 if (!stepToward(nearestMonster.x, nearestMonster.y)) run.waitTurn()
                 continue
             }
-            val nearestItem = lv.items.filter { lv.visible[lv.index(it.x, it.y)] && (it.type != ItemType.CREDITS || true) }
+            val nearestItem = lv.items.filter { lv.visible[lv.index(it.x, it.y)] }
                 .minByOrNull { DungeonGenerator.distance(it.x, it.y, run.px, run.py) }
             if (nearestItem != null && run.pack.size < DungeonRun.PACK_SIZE) {
                 if (!stepToward(nearestItem.x, nearestItem.y)) run.waitTurn()
@@ -556,30 +548,92 @@ class DungeonTest {
             }
             run.waitTurn()
         }
-        return run.completed
+        return run.completed || (run.contract == null && run.depth == run.maxDepth && run.level.monsters.isEmpty())
     }
 
-    @Test
-    fun aPlayerWhoFightsEverythingUsuallyReachesAndBeatsTheTarget() {
+    /** Share of simulated runs in which the automated player clears the ruins at a given tier (0 = no contract). */
+    private fun winRate(tier: Int, total: Int = 60): Double {
         val types = PlanetType.entries
         var wins = 0
-        val total = 60
-        val finalHealth = ArrayList<Float>()
         for (i in 0 until total) {
             val p = TestPlanets.ofType(types[i % types.size], id = 1000L + i)
             val state = GameState()
-            val tier = 1 + i % 2 // the two easier tiers
-            val c = Contract(i.toLong(), "Target $i", "a crime", p.id, "P$i", p.type, 3000, 400, tier)
-            state.bounties.available.add(c)
-            state.bounties.accept(c)
-            val run = DungeonRun(p, state, 500L + i, Random(i), contract = c)
-            if (playThrough(run, state)) {
-                wins++
-                finalHealth.add(state.stats.health)
+            var contract: Contract? = null
+            if (tier > 0) {
+                val c = Contract(i.toLong(), "Target $i", "a crime", p.id, "P$i", p.type, 3000, 400, tier)
+                state.bounties.available.add(c)
+                state.bounties.accept(c)
+                contract = c
             }
+            val run = DungeonRun(p, state, 500L + i, Random(i), contract = contract)
+            if (playThrough(run, state)) wins++
         }
-        val rate = wins.toDouble() / total
-        assertTrue(rate >= 0.78, "only $wins of $total runs got through the ruins and beat the target (rate $rate)")
-        assertTrue(finalHealth.average() > 10.0, "winners arrive barely alive: ${finalHealth.average()}")
+        return wins.toDouble() / total
+    }
+
+    @Test
+    fun harderContractsAreHarderToFinish() {
+        val rates = (0..3).map { winRate(it) }
+        // Scavenging (0) ends differently from a contract (no target to beat), so it is only checked on its own.
+        assertTrue(rates[0] >= 0.6, "clearing the ruins with no contract should be comfortable: $rates")
+        assertTrue(rates[1] >= 0.75, "tier 1 should be comfortable: $rates")
+        assertTrue(rates[1] > rates[2] + 0.1, "tier 2 should be harder than tier 1: $rates")
+        assertTrue(rates[2] > rates[3] + 0.1, "tier 3 should be harder than tier 2: $rates")
+        assertTrue(rates[3] >= 0.12, "even tier 3 must be beatable: $rates")
+        assertTrue(rates[2] >= 0.3, "tier 2 should be a fair challenge: $rates")
+    }
+
+    // ------------------------------------------------------------------ difficulty
+
+    private fun floors(type: PlanetType, depth: Int, difficulty: Int, seeds: Int = 40): List<Level> =
+        (1..seeds).map { DungeonGenerator.generate(TestPlanets.ofType(type), depth, 3, Random(it.toLong()), null, difficulty) }
+
+    @Test
+    fun harderTripsHaveMoreToughAndWakefulMonsters() {
+        val byTier = (0..3).map { floors(PlanetType.ROCKY, 2, it) }
+        val counts = byTier.map { levels -> levels.sumOf { it.monsters.size }.toDouble() / levels.size }
+        for (i in 1..3) assertTrue(counts[i] >= counts[i - 1], "monster counts should not fall with difficulty: $counts")
+        assertTrue(counts[3] > counts[0], "the hardest trips have more monsters: $counts")
+
+        fun avgHusk(levels: List<Level>) = levels.flatMap { it.monsters }.filter { it.type == MonsterType.HUSK }.map { it.maxHp }.average()
+        assertTrue(avgHusk(byTier[3]) > avgHusk(byTier[0]) * 1.15, "husks should be sturdier on hard trips")
+
+        fun asleep(levels: List<Level>): Double {
+            val all = levels.flatMap { it.monsters }
+            return all.count { it.state == AiState.SLEEPING }.toDouble() / all.size
+        }
+        assertTrue(asleep(byTier[0]) > asleep(byTier[3]) + 0.1, "fewer monsters sleep on hard trips")
+
+        assertTrue(byTier[3].flatMap { it.monsters }.first().dmgScale > byTier[0].flatMap { it.monsters }.first().dmgScale)
+    }
+
+    @Test
+    fun theWorldTypeChangesWhatLivesThere() {
+        fun share(type: PlanetType, m: MonsterType): Double {
+            val all = floors(type, 3, 2).flatMap { it.monsters }.filter { !it.type.boss }
+            return all.count { it.type == m }.toDouble() / all.size
+        }
+        assertTrue(share(PlanetType.LAVA, MonsterType.SPITTER) > share(PlanetType.ROCKY, MonsterType.SPITTER), "lava worlds breed spitters")
+        assertTrue(share(PlanetType.TOXIC, MonsterType.SCUTTLER) > share(PlanetType.ROCKY, MonsterType.SCUTTLER), "toxic worlds swarm")
+        assertTrue(share(PlanetType.ICE, MonsterType.BRUTE) > share(PlanetType.ROCKY, MonsterType.BRUTE), "ice worlds have brutes")
+    }
+
+    @Test
+    fun monsterTablesAreSensible() {
+        for (type in PlanetType.entries) for (depth in 1..3) for (d in 0..3) {
+            val table = RuinsDifficulty.monsterWeights(depth, d, type)
+            assertTrue(table.isNotEmpty() && table.all { it.second > 0 }, "$type depth $depth difficulty $d")
+        }
+        assertTrue(RuinsDifficulty.monsterWeights(1, 3, PlanetType.ICE).none { it.first == MonsterType.BRUTE }, "no brutes on the first floor")
+        assertTrue(RuinsDifficulty.monsterWeights(3, 0, PlanetType.ROCKY).none { it.first.boss })
+    }
+
+    @Test
+    fun hazardPoolsAndLootGrowWithDifficulty() {
+        assertTrue(RuinsDifficulty.hazardChance(PlanetType.LAVA, 0) > RuinsDifficulty.hazardChance(PlanetType.ROCKY, 0))
+        assertTrue(RuinsDifficulty.hazardChance(PlanetType.LAVA, 3) > RuinsDifficulty.hazardChance(PlanetType.LAVA, 0))
+        val calm = floors(PlanetType.ROCKY, 2, 0).sumOf { it.items.size }
+        val hard = floors(PlanetType.ROCKY, 2, 3).sumOf { it.items.size }
+        assertTrue(hard > calm, "harder trips pay off in loot: $calm vs $hard")
     }
 }

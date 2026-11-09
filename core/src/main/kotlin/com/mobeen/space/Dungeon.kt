@@ -29,7 +29,7 @@ enum class MonsterType(
     HUSK("Husk", 26, 5, 10, 0.75f, 1, false, 7),
     SPITTER("Spitter", 18, 4, 8, 0.70f, 4, false, 8),
     BRUTE("Brute", 50, 9, 15, 0.75f, 1, false, 6),
-    FUGITIVE("Fugitive", 100, 7, 13, 0.78f, 1, false, 10, boss = true),
+    FUGITIVE("Fugitive", 90, 7, 12, 0.78f, 1, false, 10, boss = true),
 }
 
 class Monster(
