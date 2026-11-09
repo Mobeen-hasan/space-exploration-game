@@ -39,7 +39,18 @@ class SpaceGame : Game() {
 
     fun returnToSpace() = requestSwitch { space }
 
-    fun enterSurface(planet: Planet) = requestSwitch { SurfaceScreen(this, state, planet) }
+    fun enterSurface(planet: Planet, spawnX: Float = 55f) = requestSwitch { SurfaceScreen(this, state, planet, spawnX) }
+
+    /** Go down into the planet's ruins, continuing the current expedition if there is one. */
+    fun enterDungeon(planet: Planet) = requestSwitch {
+        val existing = state.dungeon
+        val run = if (existing != null && existing.planet.id == planet.id && !existing.exited && !existing.dead) {
+            existing
+        } else {
+            DungeonRun(planet, state, kotlin.random.Random.nextLong()).also { state.dungeon = it }
+        }
+        DungeonScreen(this, state, run)
+    }
 
     fun enterInterior(spawnX: Float) = requestSwitch { InteriorScreen(this, state, spawnX) }
 

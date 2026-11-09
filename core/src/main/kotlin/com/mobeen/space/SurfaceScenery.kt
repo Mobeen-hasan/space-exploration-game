@@ -216,6 +216,7 @@ class SurfaceScenery(private val planet: Planet, private val terrain: Terrain) {
                 if (rand(key, salt + 1) > dens) continue
                 val x = (c + rand(key, salt + 2)) * Terrain.CELL
                 if (abs(terrain.padOffset(x)) < Terrain.PAD_BLEND * 0.45f) continue // keep the landing pad clear
+                if (abs(terrain.entranceOffset(x)) < Terrain.PAD_BLEND * 0.45f) continue // and the ruins entrance
                 val y = terrain.height(x)
                 if (terrain.liquid != Liquid.NONE && y < terrain.liquidLevel - 6f) continue
                 val s = 0.7f + rand(key, salt + 3) * 0.9f
@@ -442,6 +443,37 @@ class SurfaceScenery(private val planet: Planet, private val terrain: Terrain) {
         shapes.rect(sx - 8f, gy + 20f, 16f, 28f)
         shapes.setColor(1f, 0.85f, 0.5f, if (near) 1f else 0.65f)
         shapes.rect(sx - 6f, gy + 22f, 12f, 24f)
+    }
+
+    /** The stone archway down into the planet's ruins, standing on its flat pad at (ex, gy). */
+    fun drawEntrance(shapes: ShapeRenderer, ex: Float, gy: Float, near: Boolean, time: Float) {
+        val a = planet.atmoColor
+        col(shapes, 0.30f, 0.30f, 0.34f)
+        shapes.rect(ex - 38f, gy - 2f, 14f, 78f)
+        shapes.rect(ex + 24f, gy - 2f, 14f, 78f)
+        shapes.rect(ex - 44f, gy + 72f, 88f, 14f)
+        col(shapes, 0.22f, 0.22f, 0.26f)
+        shapes.rect(ex - 48f, gy + 84f, 96f, 8f)
+        col(shapes, 0.26f, 0.26f, 0.30f)
+        shapes.rect(ex - 34f, gy - 2f, 68f, 5f)
+        shapes.setColor(0.02f, 0.02f, 0.04f, 1f)
+        shapes.rect(ex - 24f, gy - 2f, 48f, 74f)
+        // glowing runes on the pillars
+        val pulse = 0.55f + 0.45f * sin(time * 2f)
+        shapes.setColor(a.r, a.g, a.b, (if (near) 1f else 0.7f) * pulse)
+        for (i in 0 until 3) {
+            shapes.rect(ex - 35f, gy + 14f + i * 17f, 8f, 4f)
+            shapes.rect(ex + 27f, gy + 14f + i * 17f, 8f, 4f)
+        }
+    }
+
+    /** A pale beam of light rising from the entrance, so it can be seen from far away. Additive blending. */
+    fun drawEntranceBeam(shapes: ShapeRenderer, ex: Float, gy: Float, time: Float) {
+        val a = planet.atmoColor
+        val strength = 0.20f + 0.06f * sin(time * 1.5f)
+        cA.set(a.r, a.g, a.b, strength)
+        cB.set(a.r, a.g, a.b, 0f)
+        shapes.rect(ex - 14f, gy + 90f, 28f, 900f, cA, cA, cB, cB)
     }
 
     /** The player figure. Feet rest at (p.x, p.y). */

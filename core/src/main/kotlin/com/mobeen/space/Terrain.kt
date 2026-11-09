@@ -61,7 +61,7 @@ class Terrain(val planet: Planet) {
                 val ridge = 1f - 2f * abs(s) + 0.27f
                 raw += amps[k] * ((1f - p.ridged) * s + p.ridged * ridge)
             }
-            val d = min(x, WIDTH - x) // distance to the landing pad, around the loop
+            val d = min(min(x, WIDTH - x), abs(x - ENTRANCE_X)) // distance to the nearest flat pad
             val blend = smoothstep(PAD_FLAT, PAD_BLEND, d)
             table[i] = raw * blend
         }
@@ -76,6 +76,9 @@ class Terrain(val planet: Planet) {
         val a = table[i]
         return a + (table[i + 1] - a) * f
     }
+
+    /** Signed distance from x to the nearest ruins entrance. */
+    fun entranceOffset(x: Float): Float = x - ENTRANCE_X - Math.round((x - ENTRANCE_X) / WIDTH) * WIDTH
 
     fun slope(x: Float): Float = (height(x + 4f) - height(x - 4f)) / 8f
 
@@ -100,6 +103,9 @@ class Terrain(val planet: Planet) {
         const val TABLE_SIZE = (WIDTH / STEP).toInt()
         const val PAD_FLAT = 220f
         const val PAD_BLEND = 700f
+
+        /** The ruins entrance stands on its own flat pad this far from the ship. */
+        const val ENTRANCE_X = 1100f
     }
 }
 

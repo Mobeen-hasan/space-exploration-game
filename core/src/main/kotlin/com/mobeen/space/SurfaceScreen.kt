@@ -22,6 +22,7 @@ class SurfaceScreen(
     private val game: SpaceGame,
     private val state: GameState,
     private val planet: Planet,
+    private val spawnX: Float = 55f,
 ) : ScreenAdapter() {
     private val camera = OrthographicCamera()
     private val viewport = ExtendViewport(1280f, 720f, camera)
@@ -51,10 +52,11 @@ class SurfaceScreen(
     private var toast: String? = null
     private var toastTimer = 0f
     private var hurtFlash = 0f
+    private var nearEntrance = false
     private var lastHealth = state.stats.health
 
     init {
-        player.spawn(terrain, 55f)
+        player.spawn(terrain, spawnX)
         camX = player.x
         camY = player.y + CAMERA_RISE
         camera.zoom = ZOOM
@@ -97,13 +99,14 @@ class SurfaceScreen(
         val h = Gdx.graphics.height.toFloat()
 
         val nearShip = abs(terrain.padOffset(player.x)) < BOARD_RANGE
+        nearEntrance = abs(terrain.entranceOffset(player.x)) < ENTER_RANGE
         controls.thrustLabel = "JUMP"
         controls.showBrake = false
-        controls.actionEnabled = nearShip
-        controls.actionLabel = "BOARD"
+        controls.actionEnabled = nearShip || nearEntrance
+        controls.actionLabel = if (nearShip) "BOARD" else "ENTER"
         controls.update(w, h)
-        if (controls.actionPressed && nearShip) {
-            game.enterInterior(InteriorScreen.AIRLOCK_SPAWN)
+        if (controls.actionPressed) {
+            if (nearShip) game.enterInterior(InteriorScreen.AIRLOCK_SPAWN) else if (nearEntrance) game.enterDungeon(planet)
             return
         }
 
@@ -169,6 +172,8 @@ class SurfaceScreen(
 
         val shipX = Math.round(camX / Terrain.WIDTH) * Terrain.WIDTH
         scenery.drawShip(shapes, shipX, terrain.height(shipX), nearShip)
+        val entranceX = Math.round((camX - Terrain.ENTRANCE_X) / Terrain.WIDTH) * Terrain.WIDTH + Terrain.ENTRANCE_X
+        scenery.drawEntrance(shapes, entranceX, terrain.height(entranceX), nearEntrance, time)
         scenery.drawPlayer(shapes, player)
         scenery.drawLiquid(shapes, camX, halfW, time)
         shapes.end()
@@ -176,6 +181,7 @@ class SurfaceScreen(
         additive(true)
         shapes.begin(ShapeType.Filled)
         scenery.drawLiquidGlow(shapes, camX, halfW, time)
+        scenery.drawEntranceBeam(shapes, entranceX, terrain.height(entranceX), time)
         scenery.drawPlayerGlow(shapes, player)
         ambient.draw(shapes, camX, camY, camera.zoom, time, scenery.daylight)
         shapes.end()
@@ -231,6 +237,13 @@ class SurfaceScreen(
             font.draw(batch, t, (w - glyphs.width) / 2f, margin + lh * 3f)
         }
 
+        if (nearEntrance && !nearShip) {
+            val t = "E / ENTER: explore the ruins"
+            glyphs.setText(font, t)
+            font.setColor(1f, 0.9f, 0.5f, 1f)
+            font.draw(batch, t, (w - glyphs.width) / 2f, margin + lh * 3f)
+        }
+
         TouchHud.drawLabels(batch, font, glyphs, controls)
 
         if (time < 10f) {
@@ -279,5 +292,6 @@ class SurfaceScreen(
         const val CAMERA_RISE = 70f
         const val LOOK_AHEAD = 110f
         const val BOARD_RANGE = 70f
+        const val ENTER_RANGE = 60f
     }
 }

@@ -3,6 +3,8 @@ package com.mobeen.space
 import com.badlogic.gdx.Input.Keys
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Walks through the screen changes that crashed in play: every transition, drawn frame by frame. */
@@ -138,5 +140,92 @@ class ScreenFlowTest {
             h.press(Keys.W)
             h.frame(60)
         }
+    }
+
+    // ------------------------------------------------------------------ ruins
+
+    private fun atEntrance(): GameHarness {
+        val h = landedHarness()
+        val planet = PlanetGenerator.forChunk(0, 0)!!
+        h.game.enterSurface(planet, Terrain.ENTRANCE_X - 20f)
+        h.frame(3)
+        assertTrue(h.screen is SurfaceScreen)
+        h.frame(10)
+        return h
+    }
+
+    @Test
+    fun entranceOpensTheRuinsAndStairsLeadBackToTheSurface() {
+        val h = atEntrance()
+        h.press(Keys.E)
+        h.frame(3)
+        assertTrue(h.screen is DungeonScreen, "E at the entrance should open the ruins")
+        assertNotNull(h.state.dungeon)
+        h.frame(60)
+
+        h.hold(Keys.A, 1) // the arrival tile is right beside the up stairs
+        h.frame(4)
+        assertTrue(h.screen is DungeonScreen, "stepping onto the stairs must not take them")
+        assertNotNull(h.state.dungeon)
+
+        h.press(Keys.E) // now choose to leave
+        h.frame(4)
+        assertTrue(h.screen is SurfaceScreen, "the entrance stairs should lead back to the surface")
+        assertNull(h.state.dungeon)
+        h.frame(60)
+    }
+
+    @Test
+    fun ruinsCanBeWalkedFoughtThroughAndRenderedOnEveryPlanetType() {
+        for (type in PlanetType.entries) {
+            val h = GameHarness()
+            h.frame(2)
+            h.game.enterDungeon(TestPlanets.ofType(type))
+            h.frame(3)
+            assertTrue(h.screen is DungeonScreen, "$type")
+            val run = h.state.dungeon!!
+            // Put a sleeping monster beside the player so combat, floating text and health bars are drawn.
+            run.level.monsters.add(Monster(MonsterType.HUSK, run.px + 1, run.py, 30, 1f, AiState.SLEEPING))
+            for (key in listOf(Keys.D, Keys.D, Keys.W, Keys.S, Keys.A, Keys.SPACE)) {
+                h.press(key)
+                h.hold(key, 3)
+                h.frame(5)
+            }
+            h.frame(30)
+            assertTrue(h.screen is DungeonScreen || h.screen is InteriorScreen || h.screen is SurfaceScreen, "$type")
+        }
+    }
+
+    @Test
+    fun dyingInTheRuinsWakesYouInTheShipWithAPenalty() {
+        val h = atEntrance()
+        h.press(Keys.E)
+        h.frame(3)
+        assertTrue(h.screen is DungeonScreen)
+
+        val credits = h.state.stats.credits
+        h.state.stats.health = 0f
+        h.frame(3)
+        assertTrue(h.screen is InteriorScreen, "collapsing in the ruins should move you to the ship")
+        assertNull(h.state.dungeon)
+        assertTrue(h.state.stats.credits < credits)
+        h.frame(30)
+    }
+
+    @Test
+    fun usingTheStairsDownRendersTheNextFloor() {
+        val h = atEntrance()
+        h.press(Keys.E)
+        h.frame(3)
+        val run = h.state.dungeon!!
+        run.px = run.level.downArriveX
+        run.py = run.level.downArriveY
+        h.hold(Keys.D, 1)
+        h.frame(5)
+        assertEquals(1, run.depth, "stepping onto the stairs must not take them")
+        h.press(Keys.E)
+        h.frame(30)
+        assertEquals(2, run.depth)
+        assertTrue(h.screen is DungeonScreen)
     }
 }

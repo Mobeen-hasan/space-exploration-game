@@ -32,6 +32,20 @@ class TerrainTest {
     }
 
     @Test
+    fun ruinsEntrancePadIsFlatToo() {
+        for (type in PlanetType.entries) for (seed in seeds) {
+            val t = Terrain(planetOf(type, seed))
+            var x = Terrain.ENTRANCE_X - Terrain.PAD_FLAT
+            while (x <= Terrain.ENTRANCE_X + Terrain.PAD_FLAT) {
+                assertEquals(0f, t.height(x), 0.001f, "$type seed $seed at x=$x")
+                x += 10f
+            }
+            assertEquals(0f, t.entranceOffset(Terrain.ENTRANCE_X), 0.001f)
+            assertEquals(0f, t.entranceOffset(Terrain.ENTRANCE_X + Terrain.WIDTH), 0.01f)
+        }
+    }
+
+    @Test
     fun worldLoopsSeamlessly() {
         for (type in PlanetType.entries) {
             val t = Terrain(planetOf(type, 7L))
