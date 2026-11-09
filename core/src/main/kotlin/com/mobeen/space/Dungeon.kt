@@ -25,11 +25,11 @@ enum class MonsterType(
     val sight: Int,
     val boss: Boolean = false,
 ) {
-    SCUTTLER("Scuttler", 12, 3, 7, 0.75f, 1, true, 7),
-    HUSK("Husk", 26, 6, 12, 0.80f, 1, false, 7),
-    SPITTER("Spitter", 18, 5, 10, 0.75f, 4, false, 8),
-    BRUTE("Brute", 50, 10, 18, 0.80f, 1, false, 6),
-    FUGITIVE("Fugitive", 100, 8, 15, 0.80f, 1, false, 10, boss = true),
+    SCUTTLER("Scuttler", 12, 2, 6, 0.70f, 1, true, 7),
+    HUSK("Husk", 26, 5, 10, 0.75f, 1, false, 7),
+    SPITTER("Spitter", 18, 4, 8, 0.70f, 4, false, 8),
+    BRUTE("Brute", 50, 9, 15, 0.75f, 1, false, 6),
+    FUGITIVE("Fugitive", 100, 7, 13, 0.78f, 1, false, 10, boss = true),
 }
 
 class Monster(
@@ -41,6 +41,10 @@ class Monster(
     var state: AiState,
 ) {
     var hp = maxHp
+
+    /** A bounty target's own name, shown instead of the monster type. */
+    var title: String? = null
+    val displayName: String get() = title ?: type.label
     var lastSeenX = x
     var lastSeenY = y
 

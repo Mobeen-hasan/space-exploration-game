@@ -228,4 +228,65 @@ class ScreenFlowTest {
         assertEquals(2, run.depth)
         assertTrue(h.screen is DungeonScreen)
     }
+
+    // ------------------------------------------------------------------ bounty board
+
+    private fun atTerminal(): GameHarness {
+        val h = GameHarness()
+        h.frame(3)
+        h.press(Keys.I)
+        h.frame(3)
+        assertTrue(h.screen is InteriorScreen)
+        h.hold(Keys.A, 40) // from the cockpit spawn to the terminal
+        h.press(Keys.E)
+        h.frame(2)
+        return h
+    }
+
+    @Test
+    fun acceptingAndAbandoningAContractAtTheTerminal() {
+        val h = atTerminal()
+        assertNull(h.state.bounties.active)
+
+        repeat(3) { h.press(Keys.S) } // down to "Bounty board"
+        h.press(Keys.ENTER)
+        h.frame(2)
+        assertTrue(h.state.bounties.available.isNotEmpty(), "the board should list contracts")
+        val first = h.state.bounties.available.first()
+
+        h.press(Keys.ENTER) // accept the first contract
+        h.frame(2)
+        assertEquals(first.id, h.state.bounties.active?.id)
+        h.frame(30)
+
+        h.press(Keys.S) // from the disabled "ACTIVE" row down to "Abandon this contract"
+        h.press(Keys.ENTER)
+        h.frame(2)
+        assertNull(h.state.bounties.active)
+        h.press(Keys.ESCAPE)
+        h.frame(30)
+    }
+
+    @Test
+    fun theTargetWaitsInTheRuinsOnlyOnTheContractPlanet() {
+        val h = GameHarness()
+        h.frame(3)
+        val target = TestPlanets.ofType(PlanetType.ROCKY, id = 123L)
+        val other = TestPlanets.ofType(PlanetType.ROCKY, id = 456L)
+        val c = Contract(5L, "Joss 'Cinder' Pike", "hijacked a barge", target.id, "Test", target.type, 2000, 400, 1)
+        h.state.bounties.available.add(c)
+        assertTrue(h.state.bounties.accept(c))
+
+        h.game.enterDungeon(target)
+        h.frame(3)
+        assertTrue(h.screen is DungeonScreen)
+        assertEquals(c, h.state.dungeon?.contract)
+        h.frame(30)
+
+        h.state.dungeon = null
+        h.game.enterDungeon(other)
+        h.frame(3)
+        assertNull(h.state.dungeon?.contract, "other planets have no target")
+        h.frame(30)
+    }
 }

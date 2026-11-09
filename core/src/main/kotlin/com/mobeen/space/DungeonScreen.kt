@@ -76,6 +76,7 @@ class DungeonScreen(
     private var waitRadius = 0f
     private val stairsCenter = Vector2()
     private var stairsRadius = 0f
+    private val restCenter = Vector2()
 
     init {
         camera.position.set(run.px * TILE + TILE / 2f, run.py * TILE + TILE / 2f, 0f)
@@ -108,7 +109,7 @@ class DungeonScreen(
             if (run.exited) {
                 leaving = true
                 state.dungeon = null
-                if (run.completed) state.pendingNotice = "Bounty complete! You collected ${DungeonRun.BOUNTY_REWARD} credits."
+                if (run.completed) state.pendingNotice = "Bounty complete! You collected ${run.reward} credits."
                 game.enterSurface(planet, Terrain.ENTRANCE_X - 25f)
             } else if (run.dead || state.stats.collapsed) {
                 leaving = true
@@ -138,6 +139,7 @@ class DungeonScreen(
         }
         waitRadius = slot * 0.75f
         waitCenter.set(w - margin - waitRadius, margin + slot + gap * 2f + waitRadius)
+        restCenter.set(waitCenter.x - waitRadius * 2.4f, waitCenter.y)
         stairsRadius = waitRadius * 1.15f
         stairsCenter.set(waitCenter.x, waitCenter.y + waitRadius + stairsRadius + gap * 2f)
     }
@@ -161,6 +163,10 @@ class DungeonScreen(
         if (input.isKeyJustPressed(Input.Keys.SPACE) || input.isKeyJustPressed(Input.Keys.PERIOD)) {
             cancelTravel()
             run.waitTurn()
+        }
+        if (input.isKeyJustPressed(Input.Keys.R)) {
+            cancelTravel()
+            run.rest()
         }
         if ((input.isKeyJustPressed(Input.Keys.E) || input.isKeyJustPressed(Input.Keys.ENTER)) && run.stairsHere() != null) {
             cancelTravel()
@@ -220,6 +226,11 @@ class DungeonScreen(
         if (run.stairsHere() != null && hypot(sx - stairsCenter.x, ty - stairsCenter.y) <= stairsRadius) {
             cancelTravel()
             run.useStairs()
+            return
+        }
+        if (hypot(sx - restCenter.x, ty - restCenter.y) <= waitRadius) {
+            cancelTravel()
+            run.rest()
             return
         }
         if (hypot(sx - waitCenter.x, ty - waitCenter.y) <= waitRadius) {
@@ -545,6 +556,8 @@ class DungeonScreen(
         }
         shapes.setColor(0.4f, 0.8f, 1f, if (waitCenter.x > 0) 0.18f else 0f)
         shapes.circle(waitCenter.x, waitCenter.y, waitRadius, 28)
+        shapes.setColor(0.5f, 1f, 0.6f, 0.14f)
+        shapes.circle(restCenter.x, restCenter.y, waitRadius, 28)
         val stairs = run.stairsHere()
         if (stairs != null) {
             shapes.setColor(0.5f, 1f, 0.6f, 0.3f)
@@ -558,6 +571,8 @@ class DungeonScreen(
         }
         shapes.setColor(0.4f, 0.8f, 1f, 0.6f)
         shapes.circle(waitCenter.x, waitCenter.y, waitRadius, 28)
+        shapes.setColor(0.5f, 1f, 0.6f, 0.5f)
+        shapes.circle(restCenter.x, restCenter.y, waitRadius, 28)
         if (stairs != null) {
             shapes.setColor(0.5f, 1f, 0.6f, 0.8f)
             shapes.circle(stairsCenter.x, stairsCenter.y, stairsRadius, 32)
@@ -584,7 +599,11 @@ class DungeonScreen(
         font.setColor(0.9f, 0.95f, 1f, 1f)
         font.draw(batch, "${planet.name} ruins  -  floor ${run.depth} of ${run.maxDepth}", margin, h - margin)
         font.setColor(0.75f, 0.9f, 1f, 0.9f)
-        val goal = if (run.completed) "Bounty complete. Head back up to the surface." else "Bounty: find the Fugitive on floor ${run.maxDepth}."
+        val goal = when {
+            run.completed -> "Bounty complete. Head back up to the surface."
+            run.contract != null -> "Bounty: bring in ${run.contract.target} on floor ${run.maxDepth}."
+            else -> "No bounty here. Explore and loot."
+        }
         font.draw(batch, goal, margin, h - margin - lh)
 
         // Item slot numbers
@@ -597,6 +616,8 @@ class DungeonScreen(
         }
         glyphs.setText(font, "WAIT")
         font.draw(batch, "WAIT", waitCenter.x - glyphs.width / 2f, waitCenter.y + glyphs.height / 2f)
+        glyphs.setText(font, "REST")
+        font.draw(batch, "REST", restCenter.x - glyphs.width / 2f, restCenter.y + glyphs.height / 2f)
 
         val stairs = run.stairsHere()
         if (stairs != null) {
@@ -637,7 +658,7 @@ class DungeonScreen(
 
         if (time < 12f) {
             font.setColor(0.8f, 0.9f, 1f, min(1f, (12f - time) / 2f))
-            val hint = "WASD / arrows: move and attack    Space: wait    1-6: use item    E: use stairs    Tap: walk or attack"
+            val hint = "WASD / arrows: move and attack    Space: wait    R: rest    1-6: use item    E: stairs    Tap: walk or attack"
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, h - margin - lh * 2f)
         }

@@ -47,7 +47,10 @@ class SpaceGame : Game() {
         val run = if (existing != null && existing.planet.id == planet.id && !existing.exited && !existing.dead) {
             existing
         } else {
-            DungeonRun(planet, state, kotlin.random.Random.nextLong()).also { state.dungeon = it }
+            DungeonRun(
+                planet, state, kotlin.random.Random.nextLong(),
+                contract = state.bounties.active?.takeIf { it.planetId == planet.id },
+            ).also { state.dungeon = it }
         }
         DungeonScreen(this, state, run)
     }

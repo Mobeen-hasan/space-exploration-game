@@ -6,6 +6,7 @@ class GameState {
     val field = PlanetField()
     val discovered = HashSet<Long>()
     val stats = Stats()
+    val bounties = BountyBoard()
 
     /** Seconds played. Drives each planet's day/night so time carries across visits. */
     var clock = 0f

@@ -62,14 +62,33 @@ class DungeonTest {
         }
     }
 
+    private fun contractFor(p: Planet, tier: Int = 2, reward: Int = 500) =
+        Contract(77L, "Vex 'Quiet' Morrow", "stole reactor cores", p.id, "Test", p.type, 3000, reward, tier)
+
     @Test
-    fun finalFloorHasTheFugitiveAndEarlierOnesDoNot() {
+    fun targetOnlyAppearsOnTheLastFloorAndOnlyForAContract() {
+        val c = contractFor(planet)
         for (seed in 1L..10L) {
-            val last = DungeonGenerator.generate(planet, 3, 3, Random(seed))
-            assertEquals(1, last.monsters.count { it.type == MonsterType.FUGITIVE })
-            val first = DungeonGenerator.generate(planet, 1, 3, Random(seed))
-            assertEquals(0, first.monsters.count { it.type.boss })
+            val withContract = DungeonGenerator.generate(planet, 3, 3, Random(seed), c)
+            val targets = withContract.monsters.filter { it.type.boss }
+            assertEquals(1, targets.size)
+            assertEquals(c.target, targets[0].title)
+            assertEquals(c.target, targets[0].displayName)
+
+            val without = DungeonGenerator.generate(planet, 3, 3, Random(seed))
+            assertEquals(0, without.monsters.count { it.type.boss })
+            assertTrue(without.items.any { it.type == ItemType.CREDITS && it.amount >= 80 }, "a cash cache replaces the target")
+
+            val early = DungeonGenerator.generate(planet, 1, 3, Random(seed), c)
+            assertEquals(0, early.monsters.count { it.type.boss })
         }
+    }
+
+    @Test
+    fun tougherContractsMeanTougherTargets() {
+        fun target(tier: Int) = DungeonGenerator.generate(planet, 3, 3, Random(5), contractFor(planet, tier)).monsters.first { it.type.boss }
+        assertTrue(target(3).maxHp > target(2).maxHp && target(2).maxHp > target(1).maxHp)
+        assertTrue(target(3).dmgScale > target(1).dmgScale)
     }
 
     @Test
@@ -187,6 +206,41 @@ class DungeonTest {
     }
 
     @Test
+    fun youStartWithTwoMedkits() {
+        val (run, _) = newRun()
+        assertEquals(List(DungeonRun.STARTING_MEDKITS) { ItemType.MEDKIT }, run.pack)
+        assertEquals(2, DungeonRun.STARTING_MEDKITS)
+    }
+
+    @Test
+    fun healthSlowlyReturnsWhileNothingIsHuntingYou() {
+        val (run, state) = newRun()
+        clearArena(run)
+        state.stats.health = 50f
+        repeat(30) { run.waitTurn() }
+        assertTrue(state.stats.health > 58f, "30 calm turns should heal at least 8, but health is ${state.stats.health}")
+    }
+
+    @Test
+    fun restingHealsAndStopsWhenFullOrWhenSomethingHuntsYou() {
+        val (run, state) = newRun()
+        clearArena(run)
+        state.stats.health = 40f
+        val turns = run.rest()
+        assertTrue(turns in 1..DungeonRun.REST_TURNS)
+        assertTrue(state.stats.health > 40f)
+
+        state.stats.health = Stats.MAX
+        assertEquals(0, run.rest(), "nothing to heal")
+
+        state.stats.health = 40f
+        val hunter = Monster(MonsterType.SPITTER, run.px + 4, run.py, 18, 1f, AiState.HUNTING)
+        run.level.monsters.add(hunter)
+        Fov.compute(run.level, run.px, run.py)
+        assertEquals(0, run.rest(), "no resting with a hunter in sight")
+    }
+
+    @Test
     fun hittingASleepingMonsterIsAnAmbushForTripleDamage() {
         val (run, _) = newRun()
         clearArena(run)
@@ -210,6 +264,17 @@ class DungeonTest {
             val limit = if (type.boss) 90f else 60f
             assertTrue(expected <= limit, "${type.label} costs about $expected health in melee (limit $limit)")
         }
+    }
+
+    @Test
+    fun theHardestTargetIsBeatableWithAnAmbushAndSomeMedkits() {
+        val avgHit = (DungeonRun.BATON_MIN + DungeonRun.BATON_MAX) / 2f * DungeonRun.PLAYER_ACCURACY
+        val hp = MonsterType.FUGITIVE.hp * Contract.hpScale(3)
+        val afterAmbush = hp - (DungeonRun.BATON_MIN + DungeonRun.BATON_MAX) / 2f * DungeonRun.AMBUSH_MULTIPLIER
+        val turns = Math.ceil((afterAmbush / avgHit).toDouble()).toFloat()
+        val perTurn = MonsterType.FUGITIVE.accuracy * (MonsterType.FUGITIVE.dmgMin + MonsterType.FUGITIVE.dmgMax) / 2f * Contract.dmgScale(3)
+        val expected = turns * perTurn
+        assertTrue(expected <= 100f, "tier 3 target costs about $expected health after an ambush")
     }
 
     @Test
@@ -258,7 +323,7 @@ class DungeonTest {
         run.tryMove(1, 0)
         run.tryMove(1, 0)
         assertEquals(3, run.weaponBonus)
-        assertEquals(2, run.armor)
+        assertEquals(DungeonRun.STARTING_ARMOR + 2, run.armor)
         assertTrue(run.level.items.isEmpty())
     }
 
@@ -268,6 +333,7 @@ class DungeonTest {
         clearArena(run)
         run.level.items.add(FloorItem(ItemType.CREDITS, run.px + 1, run.py, 42))
         run.level.items.add(FloorItem(ItemType.MEDKIT, run.px + 2, run.py))
+        run.pack.clear()
         val credits = state.stats.credits
         run.tryMove(1, 0)
         assertEquals(credits + 42, state.stats.credits)
@@ -276,7 +342,7 @@ class DungeonTest {
 
         state.stats.health = 30f
         assertTrue(run.useItem(0))
-        assertEquals(70f, state.stats.health, 1f)
+        assertEquals(30f + DungeonRun.MEDKIT_HEAL, state.stats.health, 2f)
         assertTrue(run.pack.isEmpty())
         assertFalse(run.useItem(0))
     }
@@ -285,6 +351,7 @@ class DungeonTest {
     fun fullPackLeavesTheItemOnTheFloor() {
         val (run, _) = newRun()
         clearArena(run)
+        run.pack.clear()
         repeat(DungeonRun.PACK_SIZE) { run.pack.add(ItemType.RATION) }
         run.level.items.add(FloorItem(ItemType.MEDKIT, run.px + 1, run.py))
         run.tryMove(1, 0)
@@ -368,8 +435,12 @@ class DungeonTest {
     }
 
     @Test
-    fun defeatingTheFugitivePaysTheBountyOnce() {
-        val (run, state) = newRun()
+    fun defeatingTheTargetPaysTheContractOnceAndClearsIt() {
+        val state = GameState()
+        val c = contractFor(planet, tier = 2, reward = 480)
+        state.bounties.available.add(c)
+        assertTrue(state.bounties.accept(c))
+        val run = DungeonRun(planet, state, 1L, Random(7), contract = c)
         repeat(2) {
             run.px = run.level.downArriveX
             run.py = run.level.downArriveY
@@ -377,16 +448,44 @@ class DungeonTest {
             run.useStairs()
         }
         assertEquals(3, run.depth)
+        val boss = run.level.monsters.first { it.type.boss }
         clearArena(run)
-        val boss = Monster(MonsterType.FUGITIVE, run.px + 1, run.py, 150, 1f, AiState.SLEEPING)
+        boss.x = run.px + 1
+        boss.y = run.py
         boss.hp = 1
         run.level.monsters.add(boss)
+
         val credits = state.stats.credits
         var swings = 0
         while (!run.completed && swings < 30) { run.tryMove(1, 0); swings++ }
         assertTrue(run.completed)
-        assertEquals(credits + DungeonRun.BOUNTY_REWARD, state.stats.credits)
-        assertTrue(run.messages.any { it.contains("Bounty complete") })
+        assertEquals(credits + 480, state.stats.credits)
+        assertEquals(480, run.reward)
+        assertNull(state.bounties.active, "the contract is used up")
+        assertEquals(1, state.bounties.completedCount)
+        assertTrue(run.messages.any { it.contains("Bounty complete") && it.contains(c.target) })
+    }
+
+    @Test
+    fun aRunWithoutAContractNeverPaysABounty() {
+        val (run, state) = newRun()
+        assertNull(run.contract)
+        repeat(2) {
+            run.px = run.level.downArriveX
+            run.py = run.level.downArriveY
+            run.tryMove(1, 0)
+            run.useStairs()
+        }
+        assertEquals(3, run.depth)
+        assertTrue(run.level.monsters.none { it.type.boss })
+        val credits = state.stats.credits
+        clearArena(run)
+        val stray = Monster(MonsterType.FUGITIVE, run.px + 1, run.py, 5, 1f, AiState.SLEEPING) // even a boss-type monster pays nothing
+        run.level.monsters.add(stray)
+        var swings = 0
+        while (run.level.monsters.contains(stray) && swings < 20) { run.tryMove(1, 0); swings++ }
+        assertEquals(credits, state.stats.credits)
+        assertFalse(run.completed)
     }
 
     @Test
@@ -403,5 +502,84 @@ class DungeonTest {
         assertFalse(run.tryMove(0, 1))
         run.waitTurn()
         assertEquals(t, run.turn)
+    }
+
+    // ------------------------------------------------------------------ a simple automated player
+
+    /**
+     * A plain player: fights everything it meets (ambushing sleepers), heals with medkits when hurt,
+     * rests when safe, grabs items it can see, then takes the stairs. It knows where the stairs are,
+     * which a real player has to find, but it never skips a fight.
+     */
+    private fun playThrough(run: DungeonRun, state: GameState, maxActions: Int = 4000): Boolean {
+        var actions = 0
+        while (actions++ < maxActions && !run.dead && !run.exited && !run.completed) {
+            val lv = run.level
+            val stats = state.stats
+
+            if (stats.health < 45f) {
+                val i = run.pack.indexOf(ItemType.MEDKIT)
+                if (i >= 0 && run.useItem(i)) continue
+            }
+            val adjacent = lv.monsters.firstOrNull {
+                DungeonGenerator.distance(it.x, it.y, run.px, run.py) == 1 &&
+                    Pathfinder.canStep(lv, run.px, run.py, it.x - run.px, it.y - run.py)
+            }
+            if (adjacent != null) {
+                run.tryMove(adjacent.x - run.px, adjacent.y - run.py)
+                continue
+            }
+            if (run.visibleMonsters().none { it.state == AiState.HUNTING } && stats.health < 75f && run.rest() > 0) continue
+
+            fun stepToward(tx: Int, ty: Int): Boolean {
+                var route = Pathfinder.path(lv, run.px, run.py, tx, ty, true, false) { bx, by -> lv.monsterAt(bx, by) != null }
+                if (route == null) route = Pathfinder.path(lv, run.px, run.py, tx, ty, false, false) { _, _ -> false }
+                val next = route?.firstOrNull() ?: return false
+                return run.tryMove(next[0] - run.px, next[1] - run.py)
+            }
+
+            val nearestMonster = lv.monsters.minByOrNull { DungeonGenerator.distance(it.x, it.y, run.px, run.py) }
+            if (nearestMonster != null) {
+                if (!stepToward(nearestMonster.x, nearestMonster.y)) run.waitTurn()
+                continue
+            }
+            val nearestItem = lv.items.filter { lv.visible[lv.index(it.x, it.y)] && (it.type != ItemType.CREDITS || true) }
+                .minByOrNull { DungeonGenerator.distance(it.x, it.y, run.px, run.py) }
+            if (nearestItem != null && run.pack.size < DungeonRun.PACK_SIZE) {
+                if (!stepToward(nearestItem.x, nearestItem.y)) run.waitTurn()
+                continue
+            }
+            if (lv.hasDown) {
+                if (run.stairsHere() == Tile.STAIRS_DOWN) run.useStairs()
+                else if (!stepToward(lv.downX, lv.downY)) run.waitTurn()
+                continue
+            }
+            run.waitTurn()
+        }
+        return run.completed
+    }
+
+    @Test
+    fun aPlayerWhoFightsEverythingUsuallyReachesAndBeatsTheTarget() {
+        val types = PlanetType.entries
+        var wins = 0
+        val total = 60
+        val finalHealth = ArrayList<Float>()
+        for (i in 0 until total) {
+            val p = TestPlanets.ofType(types[i % types.size], id = 1000L + i)
+            val state = GameState()
+            val tier = 1 + i % 2 // the two easier tiers
+            val c = Contract(i.toLong(), "Target $i", "a crime", p.id, "P$i", p.type, 3000, 400, tier)
+            state.bounties.available.add(c)
+            state.bounties.accept(c)
+            val run = DungeonRun(p, state, 500L + i, Random(i), contract = c)
+            if (playThrough(run, state)) {
+                wins++
+                finalHealth.add(state.stats.health)
+            }
+        }
+        val rate = wins.toDouble() / total
+        assertTrue(rate >= 0.78, "only $wins of $total runs got through the ruins and beat the target (rate $rate)")
+        assertTrue(finalHealth.average() > 10.0, "winners arrive barely alive: ${finalHealth.average()}")
     }
 }

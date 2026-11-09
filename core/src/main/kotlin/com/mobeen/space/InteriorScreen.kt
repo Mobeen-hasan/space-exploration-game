@@ -37,7 +37,9 @@ class InteriorScreen(
         COCKPIT(690f, "COCKPIT"),
     }
 
-    private class Option(val label: String, val enabled: Boolean, val run: () -> Unit)
+    private enum class MenuPage { MAIN, BOUNTIES }
+
+    private class Option(val label: String, val enabled: Boolean, val detail: String? = null, val run: () -> Unit)
 
     private val camera = OrthographicCamera()
     private val viewport = ExtendViewport(820f, 460f, camera)
@@ -64,6 +66,7 @@ class InteriorScreen(
 
     private var menuOpen = false
     private var menuSel = 0
+    private var menuPage = MenuPage.MAIN
 
     private var sleepTimer = -1f
     private var sleepApplied = false
@@ -180,6 +183,7 @@ class InteriorScreen(
             Station.TERMINAL -> {
                 menuOpen = true
                 menuSel = 0
+                menuPage = MenuPage.MAIN
             }
             Station.COCKPIT -> game.returnToSpace()
         }
@@ -198,8 +202,14 @@ class InteriorScreen(
         if (sleepTimer >= 3f) sleepTimer = -1f
     }
 
-    private fun terminalOptions(): List<Option> {
+    private fun closeMenu() {
+        menuOpen = false
+        menuPage = MenuPage.MAIN
+    }
+
+    private fun mainOptions(): List<Option> {
         val st = state.stats
+        val active = state.bounties.active
         return listOf(
             Option("Refuel +25%   (${Stats.FUEL_COST} credits)", st.credits >= Stats.FUEL_COST && st.fuel < Stats.MAX) {
                 if (st.refuel()) showToast("Refuelled. (-${Stats.FUEL_COST} credits)")
@@ -210,42 +220,106 @@ class InteriorScreen(
             Option("Emergency fuel   (free, only when almost empty)", st.fuel < Stats.EMERGENCY_THRESHOLD) {
                 if (st.emergencyFuel()) showToast("Reserve tank released.")
             },
-            Option("Bounty board   (coming soon)", false) {},
-            Option("Close", true) { menuOpen = false },
+            Option(
+                if (active != null) "Bounty board   (contract active)" else "Bounty board   (${state.bounties.available.size} listed)",
+                true,
+            ) {
+                state.bounties.refreshIfNeeded(state)
+                menuPage = MenuPage.BOUNTIES
+                menuSel = 0
+            },
+            Option("Close", true) { closeMenu() },
         )
     }
 
+    /** One line of facts about a contract: the crime, the world, and how far away it is. */
+    private fun contractDetail(c: Contract): String {
+        val planet = SaveCodec.planetFromId(c.planetId)
+        val world = if (planet != null) "${c.planetType.label} world, ${planet.temperatureC} C" else "${c.planetType.label} world"
+        return "Wanted for: ${c.crime}.  $world, ${"%.1f".format(c.distance / 1000f)}k away."
+    }
+
+    private fun bountyOptions(): List<Option> {
+        val board = state.bounties
+        val active = board.active
+        val list = ArrayList<Option>()
+        if (active != null) {
+            list.add(Option("ACTIVE: ${active.summary()}", false, contractDetail(active)) {})
+            list.add(Option("Abandon this contract", true, "You will not get it back, and the reward is lost.") {
+                board.abandon()
+                showToast("Contract abandoned.")
+                menuSel = 0
+            })
+        } else if (board.available.isEmpty()) {
+            list.add(Option("No contracts in range. Fly somewhere with planets nearby.", false) {})
+        } else {
+            for (c in board.available.toList()) {
+                list.add(Option(c.summary(), true, contractDetail(c)) {
+                    if (board.accept(c)) {
+                        showToast("Contract accepted: bring in ${c.target}.", 4f)
+                        menuSel = 0
+                    }
+                })
+            }
+        }
+        list.add(Option("Back", true) {
+            menuPage = MenuPage.MAIN
+            menuSel = 0
+        })
+        return list
+    }
+
+    private fun options(): List<Option> = if (menuPage == MenuPage.MAIN) mainOptions() else bountyOptions()
+
     private fun handleMenuInput(w: Float, h: Float) {
-        val options = terminalOptions()
+        val options = options()
+        if (menuSel >= options.size) menuSel = options.size - 1
         val input = Gdx.input
-        if (input.isKeyJustPressed(Input.Keys.ESCAPE)) menuOpen = false
+        if (input.isKeyJustPressed(Input.Keys.ESCAPE)) {
+            if (menuPage == MenuPage.BOUNTIES) {
+                menuPage = MenuPage.MAIN
+                menuSel = 0
+            } else {
+                closeMenu()
+            }
+            return
+        }
         if (input.isKeyJustPressed(Input.Keys.UP) || input.isKeyJustPressed(Input.Keys.W)) menuSel = (menuSel + options.size - 1) % options.size
         if (input.isKeyJustPressed(Input.Keys.DOWN) || input.isKeyJustPressed(Input.Keys.S)) menuSel = (menuSel + 1) % options.size
         if (input.isKeyJustPressed(Input.Keys.ENTER) || input.isKeyJustPressed(Input.Keys.E)) {
             options[menuSel].takeIf { it.enabled }?.run?.invoke()
+            return
         }
         if (input.justTouched()) {
             val tx = input.x.toFloat()
             val ty = h - input.y.toFloat()
             for (i in options.indices) {
-                val r = menuRow(w, h, i)
+                val r = menuRow(w, h, i, options.size)
                 if (tx >= r[0] && tx <= r[0] + r[2] && ty >= r[1] && ty <= r[1] + r[3]) {
                     menuSel = i
                     options[i].takeIf { it.enabled }?.run?.invoke()
+                    return
                 }
             }
         }
     }
 
-    /** Screen rectangle (x, y, width, height) of menu row [i]. */
-    private fun menuRow(w: Float, h: Float, i: Int): FloatArray {
+    /** The menu panel as (x, y, width, height), sized for [count] rows. */
+    private fun menuPanel(w: Float, h: Float, count: Int): FloatArray {
         val lh = font.lineHeight
         val rh = lh * 1.9f
-        val mw = min(w * 0.9f, lh * 30f)
-        val count = 5
-        val ph = rh * count + lh * 4f
-        val top = h / 2f + ph / 2f - lh * 3.2f
-        return floatArrayOf((w - mw) / 2f + lh, top - (i + 1) * rh, mw - lh * 2f, rh * 0.9f)
+        val mw = min(w * 0.94f, lh * 34f)
+        val ph = rh * count + lh * 5.6f
+        return floatArrayOf((w - mw) / 2f, h / 2f - ph / 2f, mw, ph)
+    }
+
+    /** Screen rectangle (x, y, width, height) of menu row [i]. */
+    private fun menuRow(w: Float, h: Float, i: Int, count: Int): FloatArray {
+        val lh = font.lineHeight
+        val rh = lh * 1.9f
+        val p = menuPanel(w, h, count)
+        val top = p[1] + p[3] - lh * 2.2f
+        return floatArrayOf(p[0] + lh, top - (i + 1) * rh + rh * 0.05f, p[2] - lh * 2f, rh * 0.9f)
     }
 
     // ------------------------------------------------------------------ drawing
@@ -318,6 +392,10 @@ class InteriorScreen(
         font.setColor(0.8f, 0.9f, 1f, 0.9f)
         font.draw(batch, "THE SHIP", margin, h - margin)
         font.draw(batch, "A / D: walk    E: use    Touch: left stick walks, green button uses", margin, h - margin - lh)
+        state.bounties.active?.let {
+            font.setColor(1f, 0.82f, 0.3f, 1f)
+            font.draw(batch, "BOUNTY: ${it.target} on ${it.planetName} (${it.reward} cr)", margin, h - margin - lh * 2f)
+        }
 
         if (!menuOpen && !sleeping && station != null) {
             val t = promptFor(station)
@@ -343,46 +421,42 @@ class InteriorScreen(
     }
 
     private fun drawMenuBackground(w: Float, h: Float) {
-        val lh = font.lineHeight
-        val rh = lh * 1.9f
-        val mw = min(w * 0.9f, lh * 30f)
-        val ph = rh * 5 + lh * 4f
-        val x = (w - mw) / 2f
-        val y = h / 2f - ph / 2f
+        val options = options()
+        val p = menuPanel(w, h, options.size)
         shapes.setColor(0f, 0f, 0f, 0.55f)
         shapes.rect(0f, 0f, w, h)
         shapes.setColor(0.04f, 0.07f, 0.10f, 0.95f)
-        shapes.rect(x, y, mw, ph)
-        val options = terminalOptions()
+        shapes.rect(p[0], p[1], p[2], p[3])
         for (i in options.indices) {
-            val r = menuRow(w, h, i)
+            val r = menuRow(w, h, i, options.size)
             val selected = i == menuSel
             shapes.setColor(0.2f, 0.7f, 0.4f, if (selected) 0.35f else 0.1f)
             shapes.rect(r[0], r[1], r[2], r[3])
         }
         shapes.set(ShapeType.Line)
         shapes.setColor(0.4f, 0.9f, 0.6f, 0.7f)
-        shapes.rect(x, y, mw, ph)
+        shapes.rect(p[0], p[1], p[2], p[3])
         shapes.set(ShapeType.Filled)
     }
 
     private fun drawMenuText(w: Float, h: Float) {
         val lh = font.lineHeight
-        val rh = lh * 1.9f
-        val mw = min(w * 0.9f, lh * 30f)
-        val ph = rh * 5 + lh * 4f
-        val x = (w - mw) / 2f
-        val y = h / 2f - ph / 2f
+        val options = options()
+        val p = menuPanel(w, h, options.size)
         font.setColor(0.5f, 1f, 0.7f, 1f)
-        font.draw(batch, "SHIP TERMINAL      Credits: ${state.stats.credits}", x + lh, y + ph - lh * 0.8f)
-        val options = terminalOptions()
+        val title = if (menuPage == MenuPage.MAIN) "SHIP TERMINAL" else "BOUNTY BOARD"
+        font.draw(batch, "$title      Credits: ${state.stats.credits}", p[0] + lh, p[1] + p[3] - lh * 0.8f)
         for ((i, o) in options.withIndex()) {
-            val r = menuRow(w, h, i)
+            val r = menuRow(w, h, i, options.size)
             if (o.enabled) font.setColor(0.9f, 1f, 0.95f, 1f) else font.setColor(0.5f, 0.55f, 0.55f, 1f)
             font.draw(batch, o.label, r[0] + lh * 0.6f, r[1] + (r[3] + font.capHeight) / 2f)
         }
+        options.getOrNull(menuSel)?.detail?.let {
+            font.setColor(1f, 0.9f, 0.55f, 1f)
+            font.draw(batch, it, p[0] + lh, p[1] + lh * 2.6f)
+        }
         font.setColor(0.6f, 0.8f, 0.7f, 0.9f)
-        font.draw(batch, "W/S or arrows: choose    E / Enter: select    Esc: close", x + lh, y + lh * 1.2f)
+        font.draw(batch, "W/S or arrows: choose    E / Enter: select    Esc: back", p[0] + lh, p[1] + lh * 1.2f)
     }
 
     private fun outsideColor(out: Color): Color {

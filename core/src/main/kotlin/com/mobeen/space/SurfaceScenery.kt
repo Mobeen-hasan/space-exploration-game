@@ -468,9 +468,9 @@ class SurfaceScenery(private val planet: Planet, private val terrain: Terrain) {
     }
 
     /** A pale beam of light rising from the entrance, so it can be seen from far away. Additive blending. */
-    fun drawEntranceBeam(shapes: ShapeRenderer, ex: Float, gy: Float, time: Float) {
-        val a = planet.atmoColor
-        val strength = 0.20f + 0.06f * sin(time * 1.5f)
+    fun drawEntranceBeam(shapes: ShapeRenderer, ex: Float, gy: Float, time: Float, bountyTarget: Boolean = false) {
+        val a = if (bountyTarget) Color(1f, 0.78f, 0.3f, 1f) else planet.atmoColor // gold marks your bounty
+        val strength = (if (bountyTarget) 0.34f else 0.20f) + 0.06f * sin(time * 1.5f)
         cA.set(a.r, a.g, a.b, strength)
         cB.set(a.r, a.g, a.b, 0f)
         shapes.rect(ex - 14f, gy + 90f, 28f, 900f, cA, cA, cB, cB)

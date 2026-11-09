@@ -181,7 +181,7 @@ class SurfaceScreen(
         additive(true)
         shapes.begin(ShapeType.Filled)
         scenery.drawLiquidGlow(shapes, camX, halfW, time)
-        scenery.drawEntranceBeam(shapes, entranceX, terrain.height(entranceX), time)
+        scenery.drawEntranceBeam(shapes, entranceX, terrain.height(entranceX), time, isBountyPlanet())
         scenery.drawPlayerGlow(shapes, player)
         ambient.draw(shapes, camX, camY, camera.zoom, time, scenery.daylight)
         shapes.end()
@@ -229,6 +229,10 @@ class SurfaceScreen(
         font.draw(batch, "%02d:%02d   %s world".format(hours, minutes, planet.type.label), margin, h - margin - lh)
         font.draw(batch, "Gravity ${"%.2f".format(planet.gravityG)} g    ${planet.temperatureC} C", margin, h - margin - lh * 2f)
         font.draw(batch, "Atmosphere: ${planet.atmosphere}", margin, h - margin - lh * 3f)
+        state.bounties.active?.takeIf { it.planetId == planet.id }?.let {
+            font.setColor(1f, 0.82f, 0.3f, 1f)
+            font.draw(batch, "BOUNTY TARGET HERE: ${it.target} - follow the gold beam to the ruins", margin, h - margin - lh * 4f)
+        }
 
         if (nearShip) {
             val t = "E / BOARD: return to your ship"
@@ -254,10 +258,12 @@ class SurfaceScreen(
         }
     }
 
+    private fun isBountyPlanet(): Boolean = state.bounties.active?.planetId == planet.id
+
     private fun drawWarnings(w: Float, h: Float) {
         val lh = font.lineHeight
         val margin = h * 0.03f
-        var y = h - margin - lh * 5f
+        var y = h - margin - lh * 6f
         val stats = state.stats
         if (stats.suffocating) {
             font.setColor(1f, 0.3f, 0.25f, 1f)

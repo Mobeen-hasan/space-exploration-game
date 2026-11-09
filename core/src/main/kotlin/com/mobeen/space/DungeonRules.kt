@@ -116,6 +116,8 @@ class DungeonRun(
     seed: Long,
     private val rnd: Random = Random.Default,
     val maxDepth: Int = 3,
+    /** The accepted contract whose target is on this planet, if any. */
+    val contract: Contract? = null,
 ) {
     private val levelSeed = seed
     private val levels = HashMap<Int, Level>()
@@ -123,7 +125,7 @@ class DungeonRun(
     var depth = 1
         private set
     val level: Level
-        get() = levels.getOrPut(depth) { DungeonGenerator.generate(planet, depth, maxDepth, Random(levelSeed * 31 + depth)) }
+        get() = levels.getOrPut(depth) { DungeonGenerator.generate(planet, depth, maxDepth, Random(levelSeed * 31 + depth), contract) }
 
     var px = 0
     var py = 0
@@ -131,14 +133,16 @@ class DungeonRun(
     var facingY = 0
 
     /** Consumables carried. Mods and plating apply as soon as they are picked up. */
-    val pack = ArrayList<ItemType>()
+    val pack = ArrayList<ItemType>().also { p -> repeat(STARTING_MEDKITS) { p.add(ItemType.MEDKIT) } }
     var weaponBonus = 0
         private set
-    var armor = 0
+    var armor = STARTING_ARMOR
         private set
 
     val messages = ArrayList<String>()
     val floatTexts = ArrayList<FloatText>()
+
+    private var calmTurns = 0
 
     var turn = 0
         private set
@@ -147,9 +151,11 @@ class DungeonRun(
     var dead = false
         private set
 
-    /** The Fugitive has been defeated and the bounty paid. */
+    /** The contract's target has been brought in and the bounty paid. */
     var completed = false
         private set
+
+    val reward: Int get() = contract?.reward ?: 0
 
     init {
         arrive(fromAbove = true)
@@ -215,14 +221,32 @@ class DungeonRun(
         endTurn()
     }
 
+    /**
+     * Rest in place for up to [maxTurns] turns. Stops when fully healed, when something is hunting you,
+     * or the moment you take damage. Returns how many turns passed.
+     */
+    fun rest(maxTurns: Int = REST_TURNS): Int {
+        var turns = 0
+        while (turns < maxTurns && !dead && !exited) {
+            if (state.stats.health >= Stats.MAX) break
+            if (visibleMonsters().any { it.state == AiState.HUNTING }) break
+            val before = state.stats.health
+            endTurn()
+            turns++
+            if (state.stats.health < before) break
+        }
+        if (turns > 0) log("You rest for $turns turns.")
+        return turns
+    }
+
     fun useItem(index: Int): Boolean {
         if (dead || exited || index !in pack.indices) return false
         val stats = state.stats
         when (pack[index]) {
             ItemType.MEDKIT -> {
-                stats.health = minOf(Stats.MAX, stats.health + 40f)
-                floatTexts.add(FloatText(px, py, "+40", FloatText.HEAL))
-                log("You use a medkit. (+40 health)")
+                stats.health = minOf(Stats.MAX, stats.health + MEDKIT_HEAL)
+                floatTexts.add(FloatText(px, py, "+${MEDKIT_HEAL.toInt()}", FloatText.HEAL))
+                log("You use a medkit. (+${MEDKIT_HEAL.toInt()} health)")
             }
             ItemType.RATION -> {
                 stats.food = minOf(Stats.MAX, stats.food + 40f)
@@ -270,7 +294,7 @@ class DungeonRun(
     private fun attack(m: Monster) {
         val ambush = m.state == AiState.SLEEPING // a sleeping target cannot dodge
         if (!ambush && rnd.nextFloat() > PLAYER_ACCURACY) {
-            log("You miss the ${m.type.label}.")
+            log("You miss the ${m.displayName}.")
             floatTexts.add(FloatText(m.x, m.y, "miss", FloatText.INFO))
             wake(m)
             return
@@ -281,14 +305,15 @@ class DungeonRun(
         floatTexts.add(FloatText(m.x, m.y, "-$dmg", FloatText.HIT_MONSTER))
         if (m.hp <= 0) {
             level.monsters.remove(m)
-            log("You subdue the ${m.type.label}.")
-            if (m.type.boss) {
+            log("You subdue the ${m.displayName}.")
+            if (m.type.boss && contract != null && !completed) {
                 completed = true
-                state.stats.credits += BOUNTY_REWARD
-                log("Bounty complete! The Fugitive is in custody. (+$BOUNTY_REWARD credits)")
+                state.stats.credits += contract.reward
+                state.bounties.completeActive(contract)
+                log("Bounty complete! ${m.displayName} is in custody. (+${contract.reward} credits)")
             }
         } else {
-            log(if (ambush) "You ambush the ${m.type.label} for $dmg!" else "You hit the ${m.type.label} for $dmg.")
+            log(if (ambush) "You ambush the ${m.displayName} for $dmg!" else "You hit the ${m.displayName} for $dmg.")
             wake(m)
         }
     }
@@ -296,7 +321,7 @@ class DungeonRun(
     private fun wake(m: Monster) {
         if (m.state != AiState.HUNTING) {
             m.state = AiState.HUNTING
-            if (level.visible[level.index(m.x, m.y)]) log("The ${m.type.label} notices you!")
+            if (level.visible[level.index(m.x, m.y)]) log("The ${m.displayName} notices you!")
         }
         m.lastSeenX = px
         m.lastSeenY = py
@@ -347,12 +372,26 @@ class DungeonRun(
         turn++
         state.clock += TURN_SECONDS
         state.stats.tickBody(TURN_SECONDS)
+        recoverWhenSafe()
         for (m in level.monsters.toList()) {
             if (dead) break
             if (m.hp > 0) act(m)
         }
         Fov.compute(level, px, py)
         if (state.stats.health <= 0f) dead = true
+    }
+
+    /** A slow heal while nothing is hunting you: one health every few turns. */
+    private fun recoverWhenSafe() {
+        if (visibleMonsters().any { it.state == AiState.HUNTING }) {
+            calmTurns = 0
+            return
+        }
+        calmTurns++
+        if (calmTurns >= TURNS_PER_REGEN) {
+            calmTurns = 0
+            state.stats.health = minOf(Stats.MAX, state.stats.health + 1f)
+        }
     }
 
     private fun act(m: Monster) {
@@ -444,14 +483,14 @@ class DungeonRun(
     private fun monsterAttack(m: Monster) {
         val acc = (m.type.accuracy - armor * 0.02f).coerceIn(0.35f, 0.95f)
         if (rnd.nextFloat() > acc) {
-            log("The ${m.type.label} misses you.")
+            log("The ${m.displayName} misses you.")
             floatTexts.add(FloatText(px, py, "miss", FloatText.INFO))
             return
         }
         val base = rnd.nextInt(m.type.dmgMin, m.type.dmgMax + 1)
         val dmg = max(1, (base * m.dmgScale).toInt() - armor)
         val verb = if (m.type.range > 1) "spits acid at you" else "hits you"
-        hurtPlayer(dmg, "The ${m.type.label} $verb")
+        hurtPlayer(dmg, "The ${m.displayName} $verb")
     }
 
     private fun log(text: String) {
@@ -465,7 +504,11 @@ class DungeonRun(
         const val BATON_MAX = 16
         const val AMBUSH_MULTIPLIER = 3 // hitting a sleeping monster
         const val PACK_SIZE = 6
+        const val STARTING_MEDKITS = 2
+        const val STARTING_ARMOR = 1 // a ship-issue vest
+        const val MEDKIT_HEAL = 50f
+        const val TURNS_PER_REGEN = 3
+        const val REST_TURNS = 20
         const val TURN_SECONDS = 1.2f
-        const val BOUNTY_REWARD = 250
     }
 }

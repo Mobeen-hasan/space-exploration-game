@@ -18,7 +18,11 @@ object DungeonGenerator {
         fun overlaps(o: Room) = x - 1 < o.x + o.w && x + w + 1 > o.x && y - 1 < o.y + o.h && y + h + 1 > o.y
     }
 
-    fun generate(planet: Planet, depth: Int, maxDepth: Int, rnd: Random): Level {
+    /**
+     * [boss] is the contract whose target hides on the last floor. Without one the last floor has no boss
+     * and holds a cash cache instead.
+     */
+    fun generate(planet: Planet, depth: Int, maxDepth: Int, rnd: Random, boss: Contract? = null): Level {
         val level = Level(W, H)
 
         val rooms = ArrayList<Room>()
@@ -64,8 +68,8 @@ object DungeonGenerator {
         }
 
         addHazards(level, planet, rooms, start, end, rnd)
-        addMonsters(level, depth, maxDepth, rooms, start, end, rnd)
-        addItems(level, depth, rooms, start, rnd)
+        addMonsters(level, depth, maxDepth, rooms, start, end, rnd, boss)
+        addItems(level, depth, maxDepth, rooms, start, end, rnd, boss)
         return level
     }
 
@@ -133,7 +137,7 @@ object DungeonGenerator {
         return null
     }
 
-    private fun addMonsters(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random) {
+    private fun addMonsters(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random, boss: Contract?) {
         val others = rooms.filter { it !== start }
         val table: List<Pair<MonsterType, Int>> = when (depth) {
             1 -> listOf(MonsterType.SCUTTLER to 60, MonsterType.HUSK to 40)
@@ -142,21 +146,24 @@ object DungeonGenerator {
         }
         val hpScale = 1f + 0.2f * (depth - 1)
         val dmgScale = 1f + 0.12f * (depth - 1)
-        repeat(3 + depth * 2) {
+        repeat(2 + depth * 2) {
             val spot = randomFloorIn(level, others, rnd) ?: return@repeat
             val type = pick(rnd, table)
-            val state = if (rnd.nextFloat() < 0.7f) AiState.SLEEPING else AiState.WANDERING
+            val state = if (rnd.nextFloat() < 0.8f) AiState.SLEEPING else AiState.WANDERING
             level.monsters.add(Monster(type, spot.first, spot.second, (type.hp * hpScale).toInt(), dmgScale, state))
         }
-        if (depth == maxDepth) {
+        if (depth == maxDepth && boss != null) {
             level.monsters.removeAll { abs(it.x - end.cx) <= 1 && abs(it.y - end.cy) <= 1 }
-            level.monsters.add(Monster(MonsterType.FUGITIVE, end.cx, end.cy, MonsterType.FUGITIVE.hp, 1f, AiState.SLEEPING))
+            val hp = (MonsterType.FUGITIVE.hp * Contract.hpScale(boss.tier)).toInt()
+            val target = Monster(MonsterType.FUGITIVE, end.cx, end.cy, hp, Contract.dmgScale(boss.tier), AiState.SLEEPING)
+            target.title = boss.target
+            level.monsters.add(target)
         }
     }
 
-    private fun addItems(level: Level, depth: Int, rooms: List<Room>, start: Room, rnd: Random) {
+    private fun addItems(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random, boss: Contract?) {
         val table = listOf(
-            ItemType.MEDKIT to 30, ItemType.RATION to 20, ItemType.STIM to 15,
+            ItemType.MEDKIT to 40, ItemType.RATION to 18, ItemType.STIM to 15,
             ItemType.CREDITS to 25, ItemType.BATON_MOD to 5, ItemType.ARMOR_PLATE to 5,
         )
         fun place(type: ItemType) {
@@ -167,6 +174,10 @@ object DungeonGenerator {
         place(ItemType.MEDKIT) // always at least one way to heal
         if (depth >= 2) place(ItemType.RATION)
         repeat(3 + rnd.nextInt(0, 3)) { place(pick(rnd, table)) }
+        if (depth == maxDepth && boss == null) { // no target down here: a stash to make the trip worthwhile
+            level.items.add(FloorItem(ItemType.CREDITS, end.cx, end.cy, rnd.nextInt(80, 151)))
+            repeat(2) { place(pick(rnd, table)) }
+        }
     }
 
     /** Smallest distance in tiles between two points, moving in eight directions. */

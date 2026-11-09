@@ -201,6 +201,18 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         if (discovered.add(p.id)) showToast("New discovery: ${p.name}")
     }
 
+    private var cachedTargetId = -1L
+    private var cachedTarget: Planet? = null
+
+    /** The planet a contract points at, rebuilt only when the contract changes. */
+    private fun targetPlanet(c: Contract): Planet? {
+        if (cachedTargetId != c.planetId) {
+            cachedTargetId = c.planetId
+            cachedTarget = SaveCodec.planetFromId(c.planetId)
+        }
+        return cachedTarget
+    }
+
     private fun showToast(text: String) {
         toast = text
         toastTimer = 2.5f
@@ -325,6 +337,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val cx = w - radius - margin
         val cy = h - radius - margin
         val scale = radius / RADAR_RANGE
+        val targetId = state.bounties.active?.planetId
 
         shapes.setColor(0.03f, 0.07f, 0.12f, 0.6f)
         shapes.circle(cx, cy, radius, 48)
@@ -338,8 +351,8 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             val px = if (clamped) cx + dx / d * edge else cx + dx
             val py = if (clamped) cy + dy / d * edge else cy + dy
             val a = if (clamped) 0.45f else 1f
-            shapes.setColor(p.c1.r, p.c1.g, p.c1.b, a)
-            shapes.circle(px, py, if (clamped) 2.5f else max(2.5f, p.radius * scale), 16)
+            if (p.id == targetId) shapes.setColor(1f, 0.8f, 0.25f, a) else shapes.setColor(p.c1.r, p.c1.g, p.c1.b, a)
+            shapes.circle(px, py, if (clamped) 3.5f else max(3f, p.radius * scale), 16)
         }
 
         // Ship marker, pointing along the heading
@@ -367,6 +380,19 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             shapes.setColor(1f, 1f, 1f, 0.9f)
             shapes.circle(cx + dx, cy + dy, max(2.5f, p.radius * scale) + 3f, 16)
         }
+        if (targetId != null) { // a gold ring marks the bounty target, even at the edge of the radar
+            for (p in nearby) {
+                if (p.id != targetId) continue
+                val dx = (p.x - ship.pos.x) * scale
+                val dy = (p.y - ship.pos.y) * scale
+                val d = hypot(dx, dy)
+                val edge = radius - 4f
+                val rx = if (d > edge) cx + dx / d * edge else cx + dx
+                val ry = if (d > edge) cy + dy / d * edge else cy + dy
+                shapes.setColor(1f, 0.8f, 0.25f, 0.95f)
+                shapes.circle(rx, ry, (if (d > edge) 3.5f else max(3f, p.radius * scale)) + 4f, 16)
+            }
+        }
         shapes.set(ShapeType.Filled)
     }
 
@@ -391,7 +417,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val margin = h * 0.03f
         val pw = maxW + pad * 2f
         val ph = lines.size * font.lineHeight + pad * 2f
-        return floatArrayOf(margin, h - margin - ph - font.lineHeight * 3.2f, pw, ph, pad)
+        return floatArrayOf(margin, h - margin - ph - font.lineHeight * 4.4f, pw, ph, pad)
     }
 
     private fun drawPanelBackground(lines: List<String>, h: Float) {
@@ -413,6 +439,12 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         font.draw(batch, "SPEED  ${ship.vel.len().toInt()}", margin, h - margin)
         font.draw(batch, "DISCOVERED  ${discovered.size}", margin, h - margin - lh)
         font.draw(batch, "POS  ${(ship.pos.x / 10f).toInt()}, ${(ship.pos.y / 10f).toInt()}", margin, h - margin - lh * 2f)
+        state.bounties.active?.let { c ->
+            val target = targetPlanet(c)
+            val away = if (target != null) hypot(target.x - ship.pos.x, target.y - ship.pos.y) else 0f
+            font.setColor(1f, 0.82f, 0.3f, 1f)
+            font.draw(batch, "BOUNTY: ${c.target} on ${c.planetName}  (${"%.1f".format(away / 1000f)}k away)", margin, h - margin - lh * 3f)
+        }
 
         // Landing panel
         if (panelLines != null) {

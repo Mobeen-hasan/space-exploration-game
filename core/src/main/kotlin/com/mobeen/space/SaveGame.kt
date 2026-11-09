@@ -28,6 +28,10 @@ object SaveCodec {
             "shipAngle" to ship.angle.toString(),
             "landedOn" to (ship.landedOn?.id?.toString() ?: ""),
             "landAngle" to ship.landAngleRad.toString(),
+            "bountyDay" to s.bounties.boardDay.toString(),
+            "bountyDone" to s.bounties.completedCount.toString(),
+            "bountyActive" to (s.bounties.active?.encode() ?: ""),
+            "bountyBoard" to s.bounties.encodeBoard(),
         )
     }
 
@@ -54,6 +58,10 @@ object SaveCodec {
                 m.getValue("shipX").toFloat(), m.getValue("shipY").toFloat(),
                 m.getValue("shipVX").toFloat(), m.getValue("shipVY").toFloat(),
                 m.getValue("shipAngle").toFloat(),
+            )
+            s.bounties.restore(
+                m["bountyDay"]?.toIntOrNull() ?: 0, m["bountyDone"]?.toIntOrNull() ?: 0,
+                m["bountyActive"] ?: "", m["bountyBoard"] ?: "",
             )
             val landed = m.getValue("landedOn")
             if (landed.isNotBlank()) {
