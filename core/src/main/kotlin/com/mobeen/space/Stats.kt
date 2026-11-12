@@ -50,6 +50,9 @@ class Stats {
     var credits = START_CREDITS
     var day = 1
 
+    /** Developer god mode: every meter is held full. Never saved. */
+    var invulnerable = false
+
     val collapsed: Boolean get() = health <= 0f || energy <= 0f || mind <= 0f
 
     /** Set while something is hurting the player, so health does not regenerate through it. */
@@ -154,7 +157,13 @@ class Stats {
         return true
     }
 
+    /** Developer cheat: fill every meter. */
+    fun refillAll() {
+        health = MAX; energy = MAX; food = MAX; air = MAX; mind = MAX; fuel = MAX; hull = MAX
+    }
+
     fun clamp() {
+        if (invulnerable) refillAll()
         health = health.coerceIn(0f, MAX)
         energy = energy.coerceIn(0f, MAX)
         food = food.coerceIn(0f, MAX)

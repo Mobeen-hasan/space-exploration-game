@@ -79,6 +79,15 @@ class SurfaceScreen(
         val dt = min(delta, 0.05f)
         time += dt
         if (toastTimer > 0f) toastTimer -= dt
+
+        val dw = Gdx.graphics.width.toFloat()
+        val dh = Gdx.graphics.height.toFloat()
+        if (game.devMenu.frame(game.devMode, dw, dh) { devOptions() }) { // paused while the developer menu is open
+            draw(dw, dh, abs(terrain.padOffset(player.x)) < BOARD_RANGE)
+            game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, dw, dh, state.stats.invulnerable)
+            return
+        }
+
         state.clock += dt
         dayPhase = (0.4f + state.clock / dayDuration) % 1f
         scenery.update(dayPhase)
@@ -125,6 +134,20 @@ class SurfaceScreen(
         camera.update()
 
         draw(w, h, nearShip)
+        game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
+    }
+
+    private fun devOptions(): List<DevOption> {
+        val list = ArrayList(DevMenu.common(state))
+        list.add(DevOption("Teleport to the ruins entrance") { devTeleport(player.x - terrain.entranceOffset(player.x) - 20f) })
+        list.add(DevOption("Teleport to the ship") { devTeleport(player.x - terrain.padOffset(player.x) + 40f) })
+        return list
+    }
+
+    private fun devTeleport(x: Float) {
+        player.spawn(terrain, x)
+        camX = player.x
+        camY = player.y + CAMERA_RISE
     }
 
     private fun additive(on: Boolean) {

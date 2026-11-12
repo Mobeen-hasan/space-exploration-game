@@ -128,6 +128,12 @@ class InteriorScreen(
         val h = Gdx.graphics.height.toFloat()
         val stats = state.stats
 
+        if (game.devMenu.frame(game.devMode, w, h) { DevMenu.common(state) }) { // paused while the developer menu is open
+            draw(w, h, nearestStation())
+            game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
+            return
+        }
+
         updateSleep(dt)
         if (!sleeping) {
             state.clock += dt
@@ -155,6 +161,7 @@ class InteriorScreen(
         }
 
         draw(w, h, station)
+        game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }
 
     private fun walk(dt: Float) {

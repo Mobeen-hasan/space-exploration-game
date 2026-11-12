@@ -73,6 +73,11 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
 
+        if (game.devMenu.frame(game.devMode, w, h) { devOptions() }) { // paused while the developer menu is open
+            drawFrame(w, h)
+            return
+        }
+
         state.clock += dt
         state.stats.tickBody(dt)
         if (state.stats.collapsed) {
@@ -103,7 +108,10 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             accumulator -= STEP
         }
         chase.update(ship, dt)
+        drawFrame(w, h)
+    }
 
+    private fun drawFrame(w: Float, h: Float) {
         Gdx.gl.glClearColor(0.012f, 0.015f, 0.03f, 1f)
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT)
 
@@ -112,6 +120,27 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
 
         hudViewport.apply()
         drawHud(w, h)
+        game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
+    }
+
+    private fun devOptions(): List<DevOption> {
+        val list = ArrayList(DevMenu.common(state))
+        state.bounties.active?.let { c ->
+            list.add(DevOption("Fly to the bounty target (${c.planetName}) and land") { SaveCodec.planetFromId(c.planetId)?.let { devLandOn(it) } })
+        }
+        list.add(DevOption("Land on the nearest planet") {
+            val around = ArrayList<Planet>()
+            field.near(ship.pos.x, ship.pos.y, 20000f, around)
+            around.minByOrNull { hypot(it.x - ship.pos.x, it.y - ship.pos.y) }?.let { devLandOn(it) }
+        })
+        return list
+    }
+
+    private fun devLandOn(p: Planet) {
+        ship.land(p, 0f, 1f)
+        discovered.add(p.id)
+        chase.snapTo(ship)
+        field.near(ship.pos.x, ship.pos.y, RADAR_RANGE, nearby)
     }
 
     // ---------------------------------------------------------------- simulation
@@ -139,7 +168,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             )
         }
         ship.update(controls, dt, canThrust)
-        if (ship.thrusting > 0f) stats.fuel = max(0f, stats.fuel - Stats.FUEL_BURN * ship.thrusting * dt)
+        if (ship.thrusting > 0f && !stats.invulnerable) stats.fuel = max(0f, stats.fuel - Stats.FUEL_BURN * ship.thrusting * dt)
         emitExhaust(dt)
         particles.update(dt)
 
@@ -164,7 +193,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
                     ship.vel.y -= 1.45f * vn * ny
                     if (speed >= Ship.LAND_SPEED) {
                         val damage = (speed - Ship.LAND_SPEED) * HULL_DAMAGE_PER_SPEED
-                        state.stats.hull = max(0f, state.stats.hull - damage)
+                        if (!state.stats.invulnerable) state.stats.hull = max(0f, state.stats.hull - damage)
                         showToast("Hull damage! Brake below ${Ship.LAND_SPEED.toInt()} to land.")
                     }
                 }

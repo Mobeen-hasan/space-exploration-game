@@ -113,6 +113,14 @@ class DungeonScreen(
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
 
+        if (game.devMenu.frame(game.devMode, w, h) { devOptions() }) { // paused while the developer menu is open
+            layout(w, h)
+            animate(dt)
+            draw(w, h)
+            game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
+            return
+        }
+
         if (!leaving) {
             if (run.exited) {
                 leaving = true
@@ -130,6 +138,22 @@ class DungeonScreen(
         if (!leaving) handleInput(dt, w, h)
         animate(dt)
         draw(w, h)
+        game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
+    }
+
+    private fun devOptions(): List<DevOption> {
+        val list = ArrayList(DevMenu.common(state))
+        list.add(DevOption("Reveal this floor") { run.devRevealFloor() })
+        list.add(DevOption("Remove all monsters on this floor") { run.devClearMonsters() })
+        if (run.level.hasDown) list.add(DevOption("Go down to floor ${run.depth + 1}") { run.devDescend() })
+        if (run.depth < run.maxDepth) list.add(DevOption("Go to the last floor") { while (run.devDescend()) Unit })
+        if (run.level.monsters.any { it.type.boss }) {
+            list.add(DevOption("Teleport next to the bounty target") { if (run.devTeleportToTarget()) lastDepth = -1 })
+        }
+        list.add(DevOption("Fill the lantern") { run.devFillLantern() })
+        list.add(DevOption("Get supplies (medkits, tonics, oil, stim)") { run.devGiveSupplies() })
+        list.add(DevOption("Set mind to 20 (see hallucinations)") { state.stats.mind = 20f })
+        return list
     }
 
     private fun layout(w: Float, h: Float) {

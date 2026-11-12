@@ -302,6 +302,55 @@ class DungeonRun(
 
     fun visibleMonsters(): List<Monster> = level.monsters.filter { level.visible[level.index(it.x, it.y)] }
 
+    // ------------------------------------------------------------------ developer tools
+
+    /** Show the whole floor. */
+    fun devRevealFloor() {
+        java.util.Arrays.fill(level.explored, true)
+        updateSight()
+    }
+
+    fun devClearMonsters() {
+        level.monsters.clear()
+        phantoms.clear()
+        updateSight()
+    }
+
+    /** Go straight down a floor. Returns false on the last floor. */
+    fun devDescend(): Boolean {
+        if (!level.hasDown || dead || exited) return false
+        descend()
+        return true
+    }
+
+    /** Stand right next to the bounty target. Only works on the last floor while the target is there. */
+    fun devTeleportToTarget(): Boolean {
+        val target = level.monsters.firstOrNull { it.type.boss } ?: return false
+        for (dy in -1..1) for (dx in -1..1) {
+            val x = target.x + dx
+            val y = target.y + dy
+            if ((dx != 0 || dy != 0) && level.tile(x, y).walkable && level.tile(x, y).harm == 0 && level.monsterAt(x, y) == null) {
+                px = x
+                py = y
+                updateSight()
+                return true
+            }
+        }
+        return false
+    }
+
+    fun devFillLantern() {
+        oil = OIL_MAX
+        lanternOn = true
+        updateSight()
+    }
+
+    fun devGiveSupplies() {
+        for (t in listOf(ItemType.MEDKIT, ItemType.TONIC, ItemType.OIL_FLASK, ItemType.STIM, ItemType.MEDKIT, ItemType.TONIC)) {
+            if (pack.size < PACK_SIZE) pack.add(t)
+        }
+    }
+
     // ------------------------------------------------------------------ internals
 
     private fun arrive(fromAbove: Boolean) {
@@ -365,6 +414,10 @@ class DungeonRun(
 
     private fun hurtPlayer(amount: Int, why: String) {
         val stats = state.stats
+        if (stats.invulnerable) { // developer god mode
+            floatTexts.add(FloatText(px, py, "0", FloatText.INFO))
+            return
+        }
         stats.health = max(0f, stats.health - amount)
         stats.mind = max(0f, stats.mind - amount * PAIN_DREAD)
         floatTexts.add(FloatText(px, py, "-$amount", FloatText.HIT_PLAYER))
@@ -431,6 +484,7 @@ class DungeonRun(
         for (m in level.monsters) {
             if (m.spotted || !level.visible[level.index(m.x, m.y)]) continue
             m.spotted = true
+            if (state.stats.invulnerable) continue
             val scare = scareOf(m.type)
             state.stats.mind = max(0f, state.stats.mind - scare)
             if (scare >= 3f) log("The sight of the ${m.displayName} chills you.")
@@ -446,7 +500,7 @@ class DungeonRun(
     }
 
     private fun burnOil() {
-        if (!lanternLit) return
+        if (!lanternLit || state.stats.invulnerable) return
         oil = max(0f, oil - OIL_BURN)
         if (oil <= 0f) log("Your lantern sputters and dies.")
     }
@@ -454,6 +508,7 @@ class DungeonRun(
     /** Dread builds in the ruins, faster in the dark and on deeper floors; a brazier's light eases it. */
     private fun tickMind() {
         val stats = state.stats
+        if (stats.invulnerable) return
         val depthFactor = 1f + 0.2f * (depth - 1)
         when {
             level.isLit(px, py) -> stats.mind = minOf(Stats.MAX, stats.mind + BRAZIER_CALM)

@@ -108,8 +108,8 @@ object GdxTestEnv {
 }
 
 /** Drives a real [SpaceGame] one frame at a time, the way the desktop launcher would. */
-class GameHarness {
-    val game = SpaceGame()
+class GameHarness(devMode: Boolean = false) {
+    val game = SpaceGame(devMode)
     val state get() = game.state
     val screen get() = game.screen
 

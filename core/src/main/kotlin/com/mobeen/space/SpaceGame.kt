@@ -4,8 +4,10 @@ import com.badlogic.gdx.Game
 import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.Screen
 
-class SpaceGame : Game() {
+/** [devMode] turns on the developer menu (start the desktop game with `--dev`). */
+class SpaceGame(val devMode: Boolean = false) : Game() {
     val state = GameState()
+    val devMenu = DevMenu()
     private lateinit var space: GameScreen
     private var transient: Screen? = null // the surface or interior screen currently in use
     private var pendingSwitch: (() -> Screen)? = null
