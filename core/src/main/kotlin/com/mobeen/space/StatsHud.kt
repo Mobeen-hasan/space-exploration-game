@@ -11,7 +11,7 @@ object StatsHud {
     private class Row(val label: String, val value: Float, val r: Float, val g: Float, val b: Float)
 
     // Listed bottom to top.
-    private fun rows(s: Stats, showAir: Boolean, showShip: Boolean): List<Row> {
+    private fun rows(s: Stats, showAir: Boolean, showShip: Boolean, showMind: Boolean = false): List<Row> {
         val list = ArrayList<Row>(6)
         if (showShip) {
             list.add(Row("HULL", s.hull, 0.65f, 0.75f, 0.90f))
@@ -21,21 +21,22 @@ object StatsHud {
         list.add(Row("FOOD", s.food, 0.90f, 0.55f, 0.20f))
         list.add(Row("ENERGY", s.energy, 0.95f, 0.80f, 0.25f))
         list.add(Row("HEALTH", s.health, 0.90f, 0.25f, 0.25f))
+        if (showMind) list.add(Row("MIND", s.mind, 0.70f, 0.50f, 1.00f))
         return list
     }
 
     /** Height of the whole stack, so screens can place text above it. */
-    fun stackHeight(barH: Float, gap: Float, showAir: Boolean, showShip: Boolean): Float {
-        val n = 3 + (if (showAir) 1 else 0) + (if (showShip) 2 else 0)
+    fun stackHeight(barH: Float, gap: Float, showAir: Boolean, showShip: Boolean, showMind: Boolean = false): Float {
+        val n = 3 + (if (showAir) 1 else 0) + (if (showShip) 2 else 0) + (if (showMind) 1 else 0)
         return n * (barH + gap)
     }
 
     /** (x, y) is the bottom-left corner of the stack. Call inside shapes.begin(Filled), HUD projection. */
     fun drawShapes(
         shapes: ShapeRenderer, s: Stats, x: Float, y: Float, barW: Float, barH: Float, gap: Float,
-        showAir: Boolean, showShip: Boolean, time: Float,
+        showAir: Boolean, showShip: Boolean, time: Float, showMind: Boolean = false,
     ) {
-        for ((i, row) in rows(s, showAir, showShip).withIndex()) {
+        for ((i, row) in rows(s, showAir, showShip, showMind).withIndex()) {
             val ry = y + i * (barH + gap)
             val frac = (row.value / Stats.MAX).coerceIn(0f, 1f)
             val low = frac < 0.2f
@@ -46,7 +47,7 @@ object StatsHud {
             shapes.rect(x, ry, barW * frac, barH)
         }
         shapes.set(ShapeType.Line)
-        for ((i, _) in rows(s, showAir, showShip).withIndex()) {
+        for ((i, _) in rows(s, showAir, showShip, showMind).withIndex()) {
             shapes.setColor(1f, 1f, 1f, 0.25f)
             shapes.rect(x, y + i * (barH + gap), barW, barH)
         }
@@ -56,10 +57,10 @@ object StatsHud {
     /** Call inside batch.begin(), HUD projection, with the same geometry as [drawShapes]. */
     fun drawLabels(
         batch: SpriteBatch, font: BitmapFont, s: Stats, x: Float, y: Float, barH: Float, gap: Float,
-        showAir: Boolean, showShip: Boolean,
+        showAir: Boolean, showShip: Boolean, showMind: Boolean = false,
     ) {
         font.setColor(1f, 1f, 1f, 0.95f)
-        for ((i, row) in rows(s, showAir, showShip).withIndex()) {
+        for ((i, row) in rows(s, showAir, showShip, showMind).withIndex()) {
             val ry = y + i * (barH + gap)
             font.draw(batch, "${row.label}  ${row.value.toInt()}", x + barH * 0.3f, ry + (barH + font.capHeight) / 2f)
         }

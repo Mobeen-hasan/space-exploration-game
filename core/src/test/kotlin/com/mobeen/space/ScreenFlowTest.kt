@@ -3,6 +3,7 @@ package com.mobeen.space
 import com.badlogic.gdx.Input.Keys
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -287,6 +288,32 @@ class ScreenFlowTest {
         h.game.enterDungeon(other)
         h.frame(3)
         assertNull(h.state.dungeon?.contract, "other planets have no target")
+        h.frame(30)
+    }
+
+    @Test
+    fun theRuinsDrawDarknessPhantomsAndAFrayingMindWithoutCrashing() {
+        val h = GameHarness()
+        h.frame(2)
+        h.game.enterDungeon(TestPlanets.ofType(PlanetType.LAVA))
+        h.frame(3)
+        assertTrue(h.screen is DungeonScreen)
+        val run = h.state.dungeon!!
+        h.press(Keys.L) // lantern off
+        h.frame(20)
+        assertFalse(run.lanternLit)
+        h.press(Keys.L) // and back on
+        h.frame(5)
+        assertTrue(run.lanternLit)
+
+        run.level.monsters.add(Monster(MonsterType.SPITTER, run.px + 2, run.py, 18, 1f, AiState.HUNTING)) // draws acid streaks
+        h.state.stats.mind = 12f // panicking, hallucinating, screen shaking
+        repeat(30) {
+            h.state.stats.mind = 12f
+            h.press(Keys.SPACE)
+            h.frame(2)
+        }
+        assertTrue(h.screen is DungeonScreen)
         h.frame(30)
     }
 }

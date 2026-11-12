@@ -20,11 +20,12 @@ class DungeonTest {
     }
 
     /** Clear a plain 7x7 open room around the player so tests do not depend on the random floor. */
-    private fun clearArena(run: DungeonRun) {
+    private fun clearArena(run: DungeonRun, size: Int = 3) {
         val lv = run.level
         lv.monsters.clear()
         lv.items.clear()
-        for (y in run.py - 3..run.py + 3) for (x in run.px - 3..run.px + 3) {
+        java.util.Arrays.fill(lv.lit, false)
+        for (y in run.py - size..run.py + size) for (x in run.px - size..run.px + size) {
             if (lv.inBounds(x, y) && lv.tile(x, y) == Tile.WALL) lv.set(x, y, Tile.FLOOR)
             if (lv.tile(x, y) != Tile.STAIRS_UP && lv.tile(x, y) != Tile.STAIRS_DOWN && lv.inBounds(x, y)) lv.set(x, y, Tile.FLOOR)
         }
@@ -510,6 +511,14 @@ class DungeonTest {
                 val i = run.pack.indexOf(ItemType.STIM)
                 if (i >= 0 && run.useItem(i)) continue
             }
+            if (run.oil < 10f) {
+                val i = run.pack.indexOf(ItemType.OIL_FLASK)
+                if (i >= 0 && run.useItem(i)) continue
+            }
+            if (stats.mind < 35f) {
+                val i = run.pack.indexOf(ItemType.TONIC)
+                if (i >= 0 && run.useItem(i)) continue
+            }
             val adjacent = lv.monsters.firstOrNull {
                 DungeonGenerator.distance(it.x, it.y, run.px, run.py) == 1 &&
                     Pathfinder.canStep(lv, run.px, run.py, it.x - run.px, it.y - run.py)
@@ -518,9 +527,36 @@ class DungeonTest {
                 run.tryMove(adjacent.x - run.px, adjacent.y - run.py)
                 continue
             }
-            if (run.visibleMonsters().none { it.state == AiState.HUNTING } && stats.health < 60f) {
-                run.waitTurn() // catch a breath: recovery is slow, so this costs food and energy
+            // Save oil in brazier light; keep the lantern lit everywhere else.
+            val inLight = lv.isLit(run.px, run.py)
+            if (inLight && run.lanternOn) run.toggleLantern()
+            if (!inLight && !run.lanternOn && run.oil > 0f) run.toggleLantern()
+
+            val calm = run.visibleMonsters().none { it.state == AiState.HUNTING }
+            if (calm && stats.health < 60f && inLight) {
+                run.waitTurn() // catch a breath by the fire: recovery is slow, so this costs food and energy
                 continue
+            }
+            if (calm && (stats.mind < 40f || stats.health < 60f)) { // go and sit by a brazier
+                if (lv.isLit(run.px, run.py)) {
+                    if (stats.mind < 70f || stats.health < 60f) { run.waitTurn(); continue }
+                } else {
+                    var best: IntArray? = null
+                    var bestD = Int.MAX_VALUE
+                    for (y in 0 until lv.height) for (x in 0 until lv.width) {
+                        val i = lv.index(x, y)
+                        if (!lv.lit[i] || !lv.explored[i] || !lv.tiles[i].walkable) continue
+                        val d = DungeonGenerator.distance(x, y, run.px, run.py)
+                        if (d < bestD) { bestD = d; best = intArrayOf(x, y) }
+                    }
+                    val b = best
+                    if (b != null) {
+                        val route = Pathfinder.path(lv, run.px, run.py, b[0], b[1], true, false) { bx, by -> lv.monsterAt(bx, by) != null }
+                        val next = route?.firstOrNull()
+                        if (next != null && run.tryMove(next[0] - run.px, next[1] - run.py)) continue
+                    }
+                }
+                if (stats.health < 60f) { run.waitTurn(); continue } // no brazier in reach: rest where you stand
             }
 
             fun stepToward(tx: Int, ty: Int): Boolean {
@@ -575,12 +611,13 @@ class DungeonTest {
     fun harderContractsAreHarderToFinish() {
         val rates = (0..3).map { winRate(it) }
         // Scavenging (0) ends differently from a contract (no target to beat), so it is only checked on its own.
-        assertTrue(rates[0] >= 0.6, "clearing the ruins with no contract should be comfortable: $rates")
-        assertTrue(rates[1] >= 0.75, "tier 1 should be comfortable: $rates")
-        assertTrue(rates[1] > rates[2] + 0.1, "tier 2 should be harder than tier 1: $rates")
-        assertTrue(rates[2] > rates[3] + 0.1, "tier 3 should be harder than tier 2: $rates")
+        // With the dread systems the ruins are meant to be harsh: even tier 1 is lost now and then.
+        assertTrue(rates[0] >= 0.65, "clearing the ruins with no contract should usually work: $rates")
+        assertTrue(rates[1] >= 0.6, "tier 1 should usually be survivable: $rates")
+        assertTrue(rates[1] > rates[2] + 0.05, "tier 2 should be harder than tier 1: $rates")
+        assertTrue(rates[2] > rates[3] + 0.15, "tier 3 should be much harder than tier 2: $rates")
+        assertTrue(rates[2] >= 0.4, "tier 2 should be a fair challenge: $rates")
         assertTrue(rates[3] >= 0.12, "even tier 3 must be beatable: $rates")
-        assertTrue(rates[2] >= 0.3, "tier 2 should be a fair challenge: $rates")
     }
 
     // ------------------------------------------------------------------ difficulty
@@ -635,5 +672,245 @@ class DungeonTest {
         val calm = floors(PlanetType.ROCKY, 2, 0).sumOf { it.items.size }
         val hard = floors(PlanetType.ROCKY, 2, 3).sumOf { it.items.size }
         assertTrue(hard > calm, "harder trips pay off in loot: $calm vs $hard")
+    }
+
+    // ------------------------------------------------------------------ dread: light and mind
+
+    @Test
+    fun everyFloorHasALitArrivalRoomBrazier() {
+        for (type in PlanetType.entries) for (depth in 1..3) for (seed in 1L..8L) {
+            val lv = DungeonGenerator.generate(TestPlanets.ofType(type), depth, 3, Random(seed))
+            val braziers = lv.tiles.count { it == Tile.BRAZIER }
+            assertTrue(braziers >= 1, "$type depth $depth seed $seed has no brazier")
+            assertTrue(lv.lit.any { it }, "$type depth $depth seed $seed has no lit tiles")
+            assertFalse(lv.tile(lv.upArriveX, lv.upArriveY) == Tile.BRAZIER)
+        }
+    }
+
+    @Test
+    fun litAreasCanBeSeenFromBeyondYourLantern() {
+        val lv = Level(24, 3)
+        for (x in 0 until 24) lv.set(x, 1, Tile.FLOOR)
+        lv.lit[lv.index(12, 1)] = true
+        Fov.compute(lv, 1, 1, 2)
+        assertTrue(lv.visible[lv.index(12, 1)], "a lit tile 11 away should be visible")
+        assertFalse(lv.visible[lv.index(6, 1)], "an unlit tile beyond your light should not be")
+        assertTrue(lv.visible[lv.index(3, 1)])
+    }
+
+    @Test
+    fun theLanternSetsHowFarYouSeeAndTogglingIsFree() {
+        val (run, _) = newRun()
+        clearArena(run, 6)
+        assertTrue(run.lanternLit)
+        assertEquals(DungeonRun.LANTERN_RADIUS, run.sightRadius)
+        val litCount = run.level.visible.count { it }
+        val turn = run.turn
+        run.toggleLantern()
+        assertEquals(turn, run.turn, "toggling the lantern costs no turn")
+        assertFalse(run.lanternLit)
+        assertEquals(DungeonRun.DARK_RADIUS, run.sightRadius)
+        assertTrue(run.level.visible.count { it } < litCount)
+    }
+
+    @Test
+    fun oilBurnsOnlyWhileLitAndFlasksRefillIt() {
+        val (run, _) = newRun()
+        clearArena(run)
+        val start = run.oil
+        repeat(10) { run.waitTurn() }
+        assertEquals(start - 10 * DungeonRun.OIL_BURN, run.oil, 0.01f)
+        run.toggleLantern()
+        val off = run.oil
+        repeat(10) { run.waitTurn() }
+        assertEquals(off, run.oil, 0.001f, "a shuttered lantern burns nothing")
+
+        run.toggleLantern()
+        while (run.oil > 0f && !run.dead) run.waitTurn()
+        assertFalse(run.lanternLit)
+        assertTrue(run.messages.any { it.contains("sputters") })
+        run.toggleLantern()
+        run.toggleLantern()
+        assertFalse(run.lanternLit, "no oil, no light")
+
+        run.pack.clear()
+        run.pack.add(ItemType.OIL_FLASK)
+        assertTrue(run.useItem(0))
+        assertEquals(DungeonRun.OIL_FLASK_AMOUNT, run.oil, 0.01f)
+    }
+
+    @Test
+    fun darknessFraysTheMindFasterThanLanternLightAndBraziersCalmIt() {
+        val (lit, s1) = newRun()
+        clearArena(lit)
+        repeat(20) { lit.waitTurn() }
+        val (dark, s2) = newRun()
+        clearArena(dark)
+        dark.toggleLantern()
+        repeat(20) { dark.waitTurn() }
+        assertTrue(s2.stats.mind < s1.stats.mind - 5f, "dark ${s2.stats.mind} vs lit ${s1.stats.mind}")
+
+        val (warm, s3) = newRun()
+        clearArena(warm)
+        warm.level.lit[warm.level.index(warm.px, warm.py)] = true
+        s3.stats.mind = 50f
+        repeat(10) { warm.waitTurn() }
+        assertTrue(s3.stats.mind > 55f, "sitting by a brazier should calm you: ${s3.stats.mind}")
+    }
+
+    @Test
+    fun theFirstSightOfAMonsterShakesYouButOnlyOnce() {
+        val (run, state) = newRun()
+        clearArena(run)
+        val brute = Monster(MonsterType.BRUTE, run.px + 2, run.py, 9999, 0f, AiState.SLEEPING)
+        run.level.monsters.add(brute)
+        val before = state.stats.mind
+        run.waitTurn()
+        assertTrue(brute.spotted)
+        val afterFirst = state.stats.mind
+        assertTrue(before - afterFirst >= 3f, "a brute should scare you: ${before - afterFirst}")
+        run.waitTurn()
+        assertTrue(afterFirst - state.stats.mind < 1f, "no second scare from the same monster")
+    }
+
+    @Test
+    fun aSleeperDoesNotNoticeYouInTheDarkButDoesInYourLight() {
+        fun wakesWithin(lanternOn: Boolean, turns: Int): Boolean {
+            val (run, _) = newRun(rndSeed = 3)
+            clearArena(run, 6)
+            val husk = Monster(MonsterType.HUSK, run.px + 5, run.py, 26, 1f, AiState.SLEEPING)
+            run.level.monsters.add(husk)
+            if (!lanternOn) run.toggleLantern()
+            repeat(turns) { if (!run.dead && husk.state == AiState.SLEEPING) run.waitTurn() }
+            return husk.state != AiState.SLEEPING
+        }
+        assertFalse(wakesWithin(lanternOn = false, turns = 60), "five tiles away in the dark, it should not see you")
+        assertTrue(wakesWithin(lanternOn = true, turns = 120), "in your lantern light it should notice you eventually")
+    }
+
+    @Test
+    fun tonicsCalmTheMind() {
+        val (run, state) = newRun()
+        clearArena(run)
+        state.stats.mind = 20f
+        run.pack.clear()
+        run.pack.add(ItemType.TONIC)
+        assertTrue(run.useItem(0))
+        assertTrue(state.stats.mind >= 20f + DungeonRun.TONIC_CALM - 1f)
+    }
+
+    @Test
+    fun panicMakesYouMissMore() {
+        fun misses(mind: Float): Int {
+            val (run, state) = newRun(rndSeed = 11)
+            clearArena(run)
+            val dummy = Monster(MonsterType.HUSK, run.px + 1, run.py, 1_000_000, 0f, AiState.WANDERING)
+            run.level.monsters.add(dummy)
+            var missed = 0
+            repeat(300) {
+                state.stats.mind = mind
+                state.stats.health = 100f
+                val hp = dummy.hp
+                run.tryMove(1, 0)
+                if (dummy.hp == hp) missed++
+            }
+            return missed
+        }
+        val calm = misses(100f)
+        val panicked = misses(5f)
+        assertTrue(panicked > calm + 30, "panicked misses $panicked vs calm $calm")
+    }
+
+    @Test
+    fun aFrayingMindSeesPhantomsThatNeverHurt() {
+        val (run, state) = newRun(rndSeed = 5)
+        clearArena(run, 6)
+        state.stats.mind = 25f
+        state.stats.health = 80f
+        var seen = 0
+        repeat(80) {
+            if (run.dead) return@repeat
+            state.stats.mind = 25f // hold the mind steady so the test is about phantoms, not breaking
+            run.waitTurn()
+            seen += run.phantoms.size
+        }
+        assertTrue(seen > 0, "no phantoms appeared")
+        assertTrue(state.stats.health >= 80f, "phantoms must never deal damage")
+        assertTrue(run.level.monsters.isEmpty(), "phantoms are not real monsters")
+    }
+
+    @Test
+    fun aCalmMindSeesNoPhantoms() {
+        val (run, _) = newRun(rndSeed = 5)
+        clearArena(run, 6)
+        repeat(60) { run.waitTurn() }
+        assertTrue(run.phantoms.isEmpty())
+    }
+
+    @Test
+    fun whenTheMindBreaksTheRunEnds() {
+        val (run, state) = newRun()
+        clearArena(run)
+        run.toggleLantern()
+        state.stats.mind = 0.5f
+        repeat(5) { if (!run.dead) run.waitTurn() }
+        assertTrue(run.dead)
+        assertTrue(state.stats.collapsed)
+        assertTrue(state.stats.collapseReason().contains("mind"))
+    }
+
+    // ------------------------------------------------------------------ fair attacks
+
+    @Test
+    fun aFastMonsterCannotCloseInAndBiteInTheSameTurn() {
+        val (run, state) = newRun(rndSeed = 2)
+        clearArena(run)
+        val scuttler = Monster(MonsterType.SCUTTLER, run.px + 2, run.py, 12, 1f, AiState.HUNTING)
+        scuttler.lastSeenX = run.px
+        scuttler.lastSeenY = run.py
+        run.level.monsters.add(scuttler)
+        val before = state.stats.health
+        run.waitTurn()
+        assertEquals(1, DungeonGenerator.distance(scuttler.x, scuttler.y, run.px, run.py), "it should close in")
+        assertTrue(run.attacks.isEmpty(), "but not attack in the same turn")
+        assertTrue(state.stats.health >= before)
+    }
+
+    @Test
+    fun aFastMonsterBesideYouStillStrikesOnlyOncePerTurn() {
+        val (run, _) = newRun(rndSeed = 2)
+        clearArena(run)
+        run.level.monsters.add(Monster(MonsterType.SCUTTLER, run.px + 1, run.py, 12, 1f, AiState.HUNTING))
+        run.waitTurn()
+        assertEquals(1, run.attacks.size)
+    }
+
+    @Test
+    fun rangedAttacksRecordWhereTheyCameFrom() {
+        val (run, _) = newRun(rndSeed = 4)
+        clearArena(run, 6)
+        val spitter = Monster(MonsterType.SPITTER, run.px + 3, run.py, 18, 1f, AiState.HUNTING)
+        run.level.monsters.add(spitter)
+        repeat(10) { if (run.attacks.isEmpty() && !run.dead) run.waitTurn() }
+        val a = run.attacks.first()
+        assertTrue(a.ranged)
+        assertFalse(a.hidden, "you can see it in your lantern light")
+        assertEquals(spitter.x, a.fromX)
+        assertEquals(run.px, a.toX)
+    }
+
+    @Test
+    fun attacksFromTheDarkAreMarkedAndNamedAsSuch() {
+        val (run, _) = newRun(rndSeed = 4)
+        clearArena(run, 6)
+        run.toggleLantern() // you see one tile; it sees three
+        val spitter = Monster(MonsterType.SPITTER, run.px + 3, run.py, 18, 1f, AiState.HUNTING)
+        spitter.lastSeenX = run.px
+        spitter.lastSeenY = run.py
+        run.level.monsters.add(spitter)
+        repeat(15) { if (run.attacks.isEmpty() && !run.dead) run.waitTurn() }
+        val a = run.attacks.first()
+        assertTrue(a.hidden)
+        assertTrue(run.messages.any { it.startsWith("Something in the dark") })
     }
 }

@@ -9,6 +9,9 @@ enum class Tile(val walkable: Boolean, val opaque: Boolean, val harm: Int) {
     LAVA(true, false, 20),
     ACID(true, false, 8),
     WATER(true, false, 0),
+
+    /** A fire bowl: you cannot walk through it, but it lights the area around it and calms the mind. */
+    BRAZIER(false, false, 0),
 }
 
 enum class AiState { SLEEPING, WANDERING, HUNTING }
@@ -52,6 +55,9 @@ class Monster(
     var drawX = x.toFloat()
     var drawY = y.toFloat()
     var flash = 0f
+
+    /** Set the first time the player sees this monster; the first sight of something is what scares you. */
+    var spotted = false
 }
 
 enum class ItemType(val label: String, val consumable: Boolean) {
@@ -61,9 +67,14 @@ enum class ItemType(val label: String, val consumable: Boolean) {
     CREDITS("Credits", false),
     BATON_MOD("Baton mod", false),
     ARMOR_PLATE("Armor plate", false),
+    OIL_FLASK("Oil flask", true),
+    TONIC("Calming tonic", true),
 }
 
 class FloorItem(val type: ItemType, val x: Int, val y: Int, val amount: Int = 0)
+
+/** A monster's attack on the player, so the screen can show where it came from. */
+class AttackEvent(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val ranged: Boolean, val hidden: Boolean)
 
 /** A floating number or word shown over a tile for a moment. */
 class FloatText(val x: Int, val y: Int, val text: String, val kind: Int) {
@@ -79,6 +90,9 @@ class FloatText(val x: Int, val y: Int, val text: String, val kind: Int) {
 class Level(val width: Int, val height: Int) {
     val tiles = Array(width * height) { Tile.WALL }
     val explored = BooleanArray(width * height)
+
+    /** Tiles lit by braziers. They can be seen from much farther away than your lantern reaches. */
+    val lit = BooleanArray(width * height)
     val visible = BooleanArray(width * height)
     val monsters = ArrayList<Monster>()
     val items = ArrayList<FloorItem>()
@@ -100,6 +114,14 @@ class Level(val width: Int, val height: Int) {
         if (inBounds(x, y)) tiles[index(x, y)] = t
     }
 
+    fun isLit(x: Int, y: Int): Boolean = inBounds(x, y) && lit[index(x, y)]
+
     fun monsterAt(x: Int, y: Int): Monster? = monsters.firstOrNull { it.x == x && it.y == y }
     fun itemAt(x: Int, y: Int): FloorItem? = items.firstOrNull { it.x == x && it.y == y }
+}
+
+/** Something the player only imagines: drawn like a monster, but it cannot touch you. */
+class Phantom(var x: Int, var y: Int, var ttl: Int, val size: Float) {
+    var drawX = x.toFloat()
+    var drawY = y.toFloat()
 }

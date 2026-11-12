@@ -188,4 +188,19 @@ class StatsTest {
         assertEquals(70f, s.health, 0.001f)
         assertEquals(2, s.day)
     }
+
+    @Test
+    fun theMindCanBreakAndSleepRestoresIt() {
+        val s = Stats()
+        s.mind = 0f
+        assertTrue(s.collapsed)
+        assertTrue(s.collapseReason().contains("mind"))
+        s.applyCollapse()
+        assertTrue(s.mind >= 40f)
+        assertFalse(s.collapsed)
+
+        s.mind = 10f
+        s.sleep()
+        assertEquals(Stats.MAX, s.mind)
+    }
 }

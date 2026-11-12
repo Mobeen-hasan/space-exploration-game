@@ -42,12 +42,15 @@ class Stats {
     var energy = MAX
     var food = MAX
     var air = MAX
+
+    /** Composure. The dark and the things in the ruins wear it down; at zero your mind gives way. */
+    var mind = MAX
     var fuel = MAX
     var hull = MAX
     var credits = START_CREDITS
     var day = 1
 
-    val collapsed: Boolean get() = health <= 0f || energy <= 0f
+    val collapsed: Boolean get() = health <= 0f || energy <= 0f || mind <= 0f
 
     /** Set while something is hurting the player, so health does not regenerate through it. */
     private var regenBlocked = false
@@ -92,15 +95,18 @@ class Stats {
     val suffocating: Boolean get() = air <= 0f
 
     /** What knocked the player out. Call only when [collapsed]. */
-    fun collapseReason(): String =
-        if (health <= 0f) "You collapsed from your injuries." else "You passed out from exhaustion."
+    fun collapseReason(): String = when {
+        health <= 0f -> "You collapsed from your injuries."
+        mind <= 0f -> "Your mind gave way in the dark."
+        else -> "You passed out from exhaustion."
+    }
 
-    /** Apply the penalty for collapsing and return the message to show on waking. */
     fun applyCollapse(): String {
         val reason = collapseReason()
         val lost = (credits * COLLAPSE_CREDIT_LOSS).toInt()
         credits -= lost
         health = max(health, 40f)
+        mind = max(mind, 40f)
         energy = max(energy, 40f)
         food = max(food, 30f)
         air = MAX
@@ -112,6 +118,7 @@ class Stats {
     }
 
     fun sleep() {
+        mind = MAX
         energy = MAX
         food = max(0f, food - 15f)
         health = min(MAX, health + 30f)
@@ -152,6 +159,7 @@ class Stats {
         energy = energy.coerceIn(0f, MAX)
         food = food.coerceIn(0f, MAX)
         air = air.coerceIn(0f, MAX)
+        mind = mind.coerceIn(0f, MAX)
         fuel = fuel.coerceIn(0f, MAX)
         hull = hull.coerceIn(0f, MAX)
         if (credits < 0) credits = 0

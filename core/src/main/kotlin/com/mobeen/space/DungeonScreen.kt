@@ -37,6 +37,11 @@ class DungeonScreen(
         var age = 0f
     }
 
+    /** A recent attack, drawn briefly: an acid streak for spit, and a red flash where the attacker stands. */
+    private class ActiveAttack(val e: AttackEvent) {
+        var age = 0f
+    }
+
     private val planet = run.planet
 
     private val camera = OrthographicCamera()
@@ -62,10 +67,13 @@ class DungeonScreen(
     private val travel = ArrayDeque<IntArray>()
     private var leaving = false
 
+    private var camX = run.px * TILE + TILE / 2f
+    private var camY = run.py * TILE + TILE / 2f
     private var drawPx = run.px.toFloat()
     private var drawPy = run.py.toFloat()
     private var lastDepth = run.depth
     private val floats = ArrayList<ActiveFloat>()
+    private val strikes = ArrayList<ActiveAttack>()
 
     private var toast: String? = null
     private var toastTimer = 0f
@@ -74,11 +82,12 @@ class DungeonScreen(
     private val slotRects = Array(DungeonRun.PACK_SIZE) { FloatArray(4) }
     private val waitCenter = Vector2()
     private var waitRadius = 0f
+    private val lightCenter = Vector2()
     private val stairsCenter = Vector2()
     private var stairsRadius = 0f
 
     init {
-        camera.position.set(run.px * TILE + TILE / 2f, run.py * TILE + TILE / 2f, 0f)
+        camera.position.set(camX, camY, 0f)
     }
 
     override fun show() {
@@ -138,6 +147,7 @@ class DungeonScreen(
         }
         waitRadius = slot * 0.75f
         waitCenter.set(w - margin - waitRadius, margin + slot + gap * 2f + waitRadius)
+        lightCenter.set(waitCenter.x - waitRadius * 2.4f, waitCenter.y)
         stairsRadius = waitRadius * 1.15f
         stairsCenter.set(waitCenter.x, waitCenter.y + waitRadius + stairsRadius + gap * 2f)
     }
@@ -162,6 +172,7 @@ class DungeonScreen(
             cancelTravel()
             run.waitTurn()
         }
+        if (input.isKeyJustPressed(Input.Keys.L)) run.toggleLantern()
         if ((input.isKeyJustPressed(Input.Keys.E) || input.isKeyJustPressed(Input.Keys.ENTER)) && run.stairsHere() != null) {
             cancelTravel()
             run.useStairs()
@@ -222,6 +233,10 @@ class DungeonScreen(
             run.useStairs()
             return
         }
+        if (hypot(sx - lightCenter.x, ty - lightCenter.y) <= waitRadius) {
+            run.toggleLantern()
+            return
+        }
         if (hypot(sx - waitCenter.x, ty - waitCenter.y) <= waitRadius) {
             cancelTravel()
             run.waitTurn()
@@ -260,8 +275,10 @@ class DungeonScreen(
             lastDepth = run.depth
             drawPx = run.px.toFloat()
             drawPy = run.py.toFloat()
-            camera.position.set(run.px * TILE + TILE / 2f, run.py * TILE + TILE / 2f, 0f)
+            camX = run.px * TILE + TILE / 2f
+            camY = run.py * TILE + TILE / 2f
             floats.clear()
+            strikes.clear()
             cancelTravel()
         }
         val k = 1f - exp(-18f * dt)
@@ -273,12 +290,26 @@ class DungeonScreen(
             m.flash = max(0f, m.flash - dt)
         }
 
+        for (p in run.phantoms) {
+            p.drawX += (p.x - p.drawX) * k * 0.5f
+            p.drawY += (p.y - p.drawY) * k * 0.5f
+        }
+
         val follow = 1f - exp(-9f * dt)
-        camera.position.x += (drawPx * TILE + TILE / 2f - camera.position.x) * follow
-        camera.position.y += (drawPy * TILE + TILE / 2f - camera.position.y) * follow
+        camX += (drawPx * TILE + TILE / 2f - camX) * follow
+        camY += (drawPy * TILE + TILE / 2f - camY) * follow
+        val fray = ((MIND_SHAKE - state.stats.mind) / MIND_SHAKE).coerceIn(0f, 1f)
+        val shake = fray * 2.5f
+        camera.position.set(camX + sin(time * 31f) * shake, camY + sin(time * 23f + 1f) * shake, 0f)
 
         for (f in run.floatTexts) floats.add(ActiveFloat(f.text, f.kind, f.x * TILE + TILE / 2f, f.y * TILE + TILE))
         run.floatTexts.clear()
+        for (a in run.attacks) strikes.add(ActiveAttack(a))
+        run.attacks.clear()
+        strikes.removeAll { a ->
+            a.age += dt
+            a.age > STRIKE_TIME
+        }
         val it = floats.iterator()
         while (it.hasNext()) {
             val f = it.next()
@@ -307,8 +338,16 @@ class DungeonScreen(
         drawTiles()
         drawItems()
         drawMonsters()
+        drawPhantoms()
         drawPlayer()
         shapes.end()
+
+        additive(true)
+        shapes.begin(ShapeType.Filled)
+        drawGlow()
+        drawStrikes()
+        shapes.end()
+        additive(false)
 
         batch.projectionMatrix = camera.combined
         batch.begin()
@@ -342,7 +381,7 @@ class DungeonScreen(
                 val i = lv.index(tx, ty)
                 if (!lv.explored[i]) continue
                 val visible = lv.visible[i]
-                val light = if (visible) 1f - min(1f, hypot((tx - run.px).toFloat(), (ty - run.py).toFloat()) / 10f) * 0.5f else 0.3f
+                val light = tileLight(i, tx, ty, visible)
                 val x = tx * TILE
                 val y = ty * TILE
                 when (lv.tiles[i]) {
@@ -365,8 +404,29 @@ class DungeonScreen(
         }
     }
 
+    /** How bright a tile is drawn: warm and steady by a brazier, flickering and fading by lantern, dim in memory. */
+    private fun tileLight(i: Int, tx: Int, ty: Int, visible: Boolean): Float {
+        if (!visible) return 0.16f
+        val lv = run.level
+        if (lv.lit[i]) return 0.9f + 0.05f * sin(time * 6f + tx)
+        val reach = run.sightRadius + 1f
+        val d = hypot((tx - run.px).toFloat(), (ty - run.py).toFloat())
+        val flicker = 0.94f + 0.06f * sin(time * 13f) * sin(time * 7.3f + 1f)
+        return max(0.12f, (1f - min(1f, d / reach) * 0.8f) * flicker)
+    }
+
     private fun drawSpecialTile(tile: Tile, x: Float, y: Float, light: Float) {
         when (tile) {
+            Tile.BRAZIER -> {
+                shapes.setColor(0.25f * light, 0.22f * light, 0.2f * light, 1f)
+                shapes.rect(x + 7f, y + 4f, TILE - 14f, 6f)
+                shapes.rect(x + 10f, y + 10f, TILE - 20f, 8f)
+                val f = 0.5f + 0.5f * sin(time * 9f + x)
+                shapes.setColor(1f, 0.55f + 0.2f * f, 0.15f, 1f)
+                shapes.triangle(x + 9f, y + 18f, x + TILE - 9f, y + 18f, x + TILE / 2f + sin(time * 7f) * 2f, y + 30f + f * 2f)
+                shapes.setColor(1f, 0.9f, 0.5f, 1f)
+                shapes.triangle(x + 12f, y + 18f, x + TILE - 12f, y + 18f, x + TILE / 2f, y + 25f + f * 2f)
+            }
             Tile.STAIRS_DOWN -> {
                 shapes.setColor(0.08f * light, 0.08f * light, 0.1f * light, 1f)
                 shapes.rect(x + 3f, y + 3f, TILE - 6f, TILE - 6f)
@@ -425,6 +485,8 @@ class DungeonScreen(
         ItemType.CREDITS -> floatArrayOf(1f, 0.85f, 0.25f)
         ItemType.BATON_MOD -> floatArrayOf(0.35f, 0.85f, 1f)
         ItemType.ARMOR_PLATE -> floatArrayOf(0.65f, 0.72f, 0.9f)
+        ItemType.OIL_FLASK -> floatArrayOf(0.95f, 0.72f, 0.3f)
+        ItemType.TONIC -> floatArrayOf(0.72f, 0.5f, 1f)
     }
 
     private fun drawMonsters() {
@@ -478,6 +540,73 @@ class DungeonScreen(
         }
     }
 
+    /** Imagined shapes: dark silhouettes with pale eyes that never quite hold still. */
+    private fun drawPhantoms() {
+        val lv = run.level
+        for (p in run.phantoms) {
+            if (!lv.explored[lv.index(p.x, p.y)]) continue
+            val cx = p.drawX * TILE + TILE / 2f + sin(time * 17f + p.size) * 1.5f
+            val cy = p.drawY * TILE + TILE / 2f
+            val a = 0.55f + 0.3f * sin(time * 5f + p.size)
+            shapes.setColor(0.06f, 0.02f, 0.08f, a)
+            shapes.circle(cx, cy, p.size, 16)
+            shapes.setColor(0.9f, 0.9f, 1f, a)
+            shapes.circle(cx - p.size * 0.35f, cy + 2f, 1.6f, 6)
+            shapes.circle(cx + p.size * 0.35f, cy + 2f, 1.6f, 6)
+        }
+    }
+
+    private fun drawStrikes() {
+        for (a in strikes) {
+            val t = 1f - a.age / STRIKE_TIME
+            val fx = a.e.fromX * TILE + TILE / 2f
+            val fy = a.e.fromY * TILE + TILE / 2f
+            val tx = a.e.toX * TILE + TILE / 2f
+            val ty = a.e.toY * TILE + TILE / 2f
+            if (a.e.ranged) {
+                shapes.setColor(0.5f, 1f, 0.3f, 0.8f * t)
+                shapes.rectLine(fx, fy, tx, ty, 3f)
+                shapes.setColor(0.8f, 1f, 0.6f, 0.9f * t)
+                shapes.circle(fx + (tx - fx) * (1f - t), fy + (ty - fy) * (1f - t), 4f, 10)
+            }
+            // Mark where the blow came from, even if the attacker is hidden in the dark.
+            shapes.setColor(1f, 0.15f, 0.1f, 0.55f * t)
+            shapes.circle(fx, fy, TILE * 0.45f, 16)
+            if (a.e.hidden) {
+                shapes.setColor(1f, 0.3f, 0.2f, 0.9f * t)
+                shapes.circle(fx - 4f, fy + 2f, 2f, 6)
+                shapes.circle(fx + 4f, fy + 2f, 2f, 6)
+            }
+        }
+    }
+
+    /** Light sources, drawn additively: brazier glows and your lantern's halo. */
+    private fun drawGlow() {
+        val lv = run.level
+        val halfW = camera.viewportWidth * camera.zoom / 2f + TILE * 6f
+        val halfH = camera.viewportHeight * camera.zoom / 2f + TILE * 6f
+        for (y in 0 until lv.height) for (x in 0 until lv.width) {
+            if (lv.tiles[lv.index(x, y)] != Tile.BRAZIER || !lv.explored[lv.index(x, y)]) continue
+            val cx = x * TILE + TILE / 2f
+            val cy = y * TILE + TILE / 2f
+            if (abs(cx - camera.position.x) > halfW || abs(cy - camera.position.y) > halfH) continue
+            val f = 0.85f + 0.15f * sin(time * 5f + x)
+            for (k in 0 until 5) {
+                shapes.setColor(1f, 0.55f, 0.2f, 0.035f * f)
+                shapes.circle(cx, cy + 6f, TILE * (0.6f + k * 0.8f), 24)
+            }
+        }
+        if (run.lanternLit) {
+            val cx = drawPx * TILE + TILE / 2f
+            val cy = drawPy * TILE + TILE / 2f
+            val f = 0.9f + 0.1f * sin(time * 13f)
+            for (k in 0 until 4) {
+                shapes.setColor(1f, 0.78f, 0.45f, 0.03f * f)
+                shapes.circle(cx, cy, TILE * (1f + k * run.sightRadius * 0.3f), 28)
+            }
+        }
+    }
+
     private fun drawPlayer() {
         val cx = drawPx * TILE + TILE / 2f
         val cy = drawPy * TILE + TILE / 2f
@@ -526,10 +655,13 @@ class DungeonScreen(
     private fun drawHudShapes(w: Float, h: Float) {
         val barH = font.lineHeight
         val gap = barH * 0.25f
+        drawMindVignette(w, h)
         StatsHud.drawShapes(
             shapes, state.stats, h * 0.03f, h * 0.03f + barH * 3f, barH * 9f, barH, gap,
-            showAir = false, showShip = false, time = time,
+            showAir = false, showShip = false, time = time, showMind = true,
         )
+        shapes.setColor(1f, 0.75f, 0.3f, if (run.lanternLit) 0.28f else 0.08f)
+        shapes.circle(lightCenter.x, lightCenter.y, waitRadius, 28)
 
         // Item slots
         for (i in slotRects.indices) {
@@ -574,12 +706,21 @@ class DungeonScreen(
         val gap = barH * 0.25f
         val barX = margin
         val barY = margin + barH * 3f
-        StatsHud.drawLabels(batch, font, stats, barX, barY, barH, gap, showAir = false, showShip = false)
+        StatsHud.drawLabels(batch, font, stats, barX, barY, barH, gap, showAir = false, showShip = false, showMind = true)
         font.setColor(1f, 0.9f, 0.5f, 1f)
-        font.draw(
-            batch, "CREDITS ${stats.credits}    BATON +${run.weaponBonus}   ARMOR ${run.armor}",
-            barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = false) + barH * 0.4f,
-        )
+        val stackTop = barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = false, showMind = true)
+        font.draw(batch, "CREDITS ${stats.credits}    BATON +${run.weaponBonus}   ARMOR ${run.armor}", barX, stackTop + barH * 0.4f)
+        val lantern = when {
+            run.lanternLit -> "LANTERN  oil ${run.oil.toInt()}"
+            run.oil <= 0f -> "LANTERN  empty"
+            else -> "LANTERN  off  (oil ${run.oil.toInt()})"
+        }
+        font.setColor(1f, 0.78f, 0.45f, 1f)
+        font.draw(batch, lantern, barX, stackTop + barH * 1.5f)
+        mindState()?.let {
+            font.setColor(0.8f, 0.6f, 1f, 1f)
+            font.draw(batch, it, barX, stackTop + barH * 2.6f)
+        }
 
         font.setColor(0.9f, 0.95f, 1f, 1f)
         font.draw(batch, "${planet.name} ruins  -  floor ${run.depth} of ${run.maxDepth}", margin, h - margin)
@@ -601,6 +742,9 @@ class DungeonScreen(
         }
         glyphs.setText(font, "WAIT")
         font.draw(batch, "WAIT", waitCenter.x - glyphs.width / 2f, waitCenter.y + glyphs.height / 2f)
+        font.setColor(1f, 0.85f, 0.6f, 1f)
+        glyphs.setText(font, "LIGHT")
+        font.draw(batch, "LIGHT", lightCenter.x - glyphs.width / 2f, lightCenter.y + glyphs.height / 2f)
 
         val stairs = run.stairsHere()
         if (stairs != null) {
@@ -641,10 +785,35 @@ class DungeonScreen(
 
         if (time < 12f) {
             font.setColor(0.8f, 0.9f, 1f, min(1f, (12f - time) / 2f))
-            val hint = "WASD / arrows: move and attack    Space: wait    1-6: use item    E: stairs    Tap: walk or attack"
+            val hint = "WASD / arrows: move and attack    Space: wait    L: lantern    1-6: use item    E: stairs"
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, h - margin - lh * 2f)
         }
+    }
+
+    private fun mindState(): String? {
+        val mind = state.stats.mind
+        return when {
+            mind < DungeonRun.PANIC_MIND -> "PANICKING - your aim is shaking"
+            mind < DungeonRun.HALLUCINATE_MIND -> "Seeing things that are not there"
+            mind < DungeonRun.WHISPER_MIND -> "Uneasy"
+            else -> null
+        }
+    }
+
+    /** As the mind frays, the edges of the screen darken and bruise purple. */
+    private fun drawMindVignette(w: Float, h: Float) {
+        val fray = ((DungeonRun.WHISPER_MIND - state.stats.mind) / DungeonRun.WHISPER_MIND).coerceIn(0f, 1f)
+        if (fray <= 0f) return
+        val pulse = 0.85f + 0.15f * sin(time * 2.2f)
+        val a = 0.55f * fray * pulse
+        val edge = Color(0.12f, 0f, 0.15f, a)
+        val clear = Color(0.12f, 0f, 0.15f, 0f)
+        val band = min(w, h) * (0.12f + 0.18f * fray)
+        shapes.rect(0f, 0f, band, h, edge, clear, clear, edge)
+        shapes.rect(w - band, 0f, band, h, clear, edge, edge, clear)
+        shapes.rect(0f, 0f, w, band, edge, edge, clear, clear)
+        shapes.rect(0f, h - band, w, band, clear, clear, edge, edge)
     }
 
     override fun dispose() {
@@ -658,5 +827,7 @@ class DungeonScreen(
         const val TILE = 32f
         const val MOVE_DELAY = 0.13f
         const val TRAVEL_DELAY = 0.09f
+        const val MIND_SHAKE = 30f
+        const val STRIKE_TIME = 0.45f
     }
 }

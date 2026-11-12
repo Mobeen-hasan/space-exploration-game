@@ -8,6 +8,9 @@ import kotlin.random.Random
 object Fov {
     const val RADIUS = 9
 
+    /** How far away a brazier-lit tile can still be seen. */
+    const val VIEW_MAX = 12
+
     /** True if nothing opaque lies strictly between the two tiles. The end tile itself may be a wall. */
     fun los(level: Level, x0: Int, y0: Int, x1: Int, y1: Int): Boolean {
         var x = x0
@@ -27,17 +30,23 @@ object Fov {
         }
     }
 
-    /** Marks every tile the player can see, and remembers them as explored. */
+    /**
+     * Marks every tile the player can see, and remembers them as explored. [radius] is how far your own light
+     * reaches; tiles lit by braziers can be seen from up to [VIEW_MAX] away.
+     */
     fun compute(level: Level, px: Int, py: Int, radius: Int = RADIUS) {
         java.util.Arrays.fill(level.visible, false)
-        for (ty in py - radius..py + radius) {
-            for (tx in px - radius..px + radius) {
+        val view = max(radius, VIEW_MAX)
+        for (ty in py - view..py + view) {
+            for (tx in px - view..px + view) {
                 if (!level.inBounds(tx, ty)) continue
                 val dx = tx - px
                 val dy = ty - py
-                if (dx * dx + dy * dy > radius * radius) continue
+                val d2 = dx * dx + dy * dy
+                val i = level.index(tx, ty)
+                val nearby = d2 <= radius * radius
+                if (!nearby && !(level.lit[i] && d2 <= view * view)) continue
                 if (los(level, px, py, tx, ty)) {
-                    val i = level.index(tx, ty)
                     level.visible[i] = true
                     level.explored[i] = true
                 }
@@ -145,7 +154,23 @@ class DungeonRun(
     val messages = ArrayList<String>()
     val floatTexts = ArrayList<FloatText>()
 
+    /** Attacks on the player since the screen last looked, so it can show where they came from. */
+    val attacks = ArrayList<AttackEvent>()
+
     private var calmTurns = 0
+
+    /** Your lantern. Off saves oil and keeps you hidden, but you see almost nothing and dread builds fast. */
+    var lanternOn = true
+        private set
+    var oil = OIL_START
+        private set
+    val lanternLit: Boolean get() = lanternOn && oil > 0f
+
+    /** How far you can see by your own light. Brazier-lit areas can be seen from farther. */
+    val sightRadius: Int get() = if (lanternLit) LANTERN_RADIUS else DARK_RADIUS
+
+    /** Things you think you see when your mind is fraying. They cannot hurt you. */
+    val phantoms = ArrayList<Phantom>()
 
     var turn = 0
         private set
@@ -219,6 +244,18 @@ class DungeonRun(
         return true
     }
 
+    /** Turn the lantern on or off. Costs no turn. */
+    fun toggleLantern() {
+        if (dead || exited) return
+        if (!lanternOn && oil <= 0f) {
+            log("Your lantern is out of oil.")
+            return
+        }
+        lanternOn = !lanternOn
+        log(if (lanternOn) "You raise your lantern." else "You shutter your lantern. The dark closes in.")
+        updateSight()
+    }
+
     fun waitTurn() {
         if (dead || exited) return
         endTurn()
@@ -241,6 +278,15 @@ class DungeonRun(
                 stats.energy = minOf(Stats.MAX, stats.energy + 35f)
                 log("You inject a stim. (+35 energy)")
             }
+            ItemType.OIL_FLASK -> {
+                oil = minOf(OIL_MAX, oil + OIL_FLASK_AMOUNT)
+                log("You refill your lantern.")
+            }
+            ItemType.TONIC -> {
+                stats.mind = minOf(Stats.MAX, stats.mind + TONIC_CALM)
+                floatTexts.add(FloatText(px, py, "+${TONIC_CALM.toInt()}", FloatText.HEAL))
+                log("You drink a calming tonic. Your hands stop shaking.")
+            }
             else -> return false
         }
         pack.removeAt(index)
@@ -261,7 +307,8 @@ class DungeonRun(
     private fun arrive(fromAbove: Boolean) {
         val lv = level
         if (fromAbove) { px = lv.upArriveX; py = lv.upArriveY } else { px = lv.downArriveX; py = lv.downArriveY }
-        Fov.compute(lv, px, py)
+        phantoms.clear()
+        updateSight()
     }
 
     private fun descend() {
@@ -278,7 +325,8 @@ class DungeonRun(
 
     private fun attack(m: Monster) {
         val ambush = m.state == AiState.SLEEPING // a sleeping target cannot dodge
-        if (!ambush && rnd.nextFloat() > PLAYER_ACCURACY) {
+        val accuracy = if (state.stats.mind < PANIC_MIND) PLAYER_ACCURACY - PANIC_ACCURACY_LOSS else PLAYER_ACCURACY
+        if (!ambush && rnd.nextFloat() > accuracy) {
             log("You miss the ${m.displayName}.")
             floatTexts.add(FloatText(m.x, m.y, "miss", FloatText.INFO))
             wake(m)
@@ -291,6 +339,9 @@ class DungeonRun(
         if (m.hp <= 0) {
             level.monsters.remove(m)
             log("You subdue the ${m.displayName}.")
+            // Winning a fight steadies your nerves; bringing in the target steadies them a lot.
+            val steadied = if (m.type.boss) BOSS_STEADY else KILL_STEADY
+            state.stats.mind = minOf(Stats.MAX, state.stats.mind + steadied)
             if (m.type.boss && contract != null && !completed) {
                 completed = true
                 state.stats.credits += contract.reward
@@ -315,6 +366,7 @@ class DungeonRun(
     private fun hurtPlayer(amount: Int, why: String) {
         val stats = state.stats
         stats.health = max(0f, stats.health - amount)
+        stats.mind = max(0f, stats.mind - amount * PAIN_DREAD)
         floatTexts.add(FloatText(px, py, "-$amount", FloatText.HIT_PLAYER))
         if (why.isNotEmpty()) log("$why for $amount!")
         if (stats.health <= 0f && !dead) {
@@ -358,13 +410,105 @@ class DungeonRun(
         state.clock += TURN_SECONDS
         state.stats.tickBody(TURN_SECONDS)
         recoverWhenSafe()
+        burnOil()
+        tickMind()
         for (m in level.monsters.toList()) {
             if (dead) break
             if (m.hp > 0) act(m)
         }
-        Fov.compute(level, px, py)
+        updateSight()
+        updatePhantoms()
+        whisper()
         if (state.stats.health <= 0f) dead = true
+        if (state.stats.mind <= 0f && !dead) {
+            dead = true
+            log("Your mind gives way...")
+        }
     }
+
+    private fun updateSight() {
+        Fov.compute(level, px, py, sightRadius)
+        for (m in level.monsters) {
+            if (m.spotted || !level.visible[level.index(m.x, m.y)]) continue
+            m.spotted = true
+            val scare = scareOf(m.type)
+            state.stats.mind = max(0f, state.stats.mind - scare)
+            if (scare >= 3f) log("The sight of the ${m.displayName} chills you.")
+        }
+    }
+
+    private fun scareOf(type: MonsterType): Float = when (type) {
+        MonsterType.SCUTTLER -> 0f
+        MonsterType.HUSK -> 1f
+        MonsterType.SPITTER -> 1f
+        MonsterType.BRUTE -> 3f
+        MonsterType.FUGITIVE -> 5f
+    }
+
+    private fun burnOil() {
+        if (!lanternLit) return
+        oil = max(0f, oil - OIL_BURN)
+        if (oil <= 0f) log("Your lantern sputters and dies.")
+    }
+
+    /** Dread builds in the ruins, faster in the dark and on deeper floors; a brazier's light eases it. */
+    private fun tickMind() {
+        val stats = state.stats
+        val depthFactor = 1f + 0.2f * (depth - 1)
+        when {
+            level.isLit(px, py) -> stats.mind = minOf(Stats.MAX, stats.mind + BRAZIER_CALM)
+            !lanternLit -> stats.mind -= DARK_DREAD * depthFactor
+            else -> stats.mind -= RUINS_DREAD * depthFactor
+        }
+        stats.mind = stats.mind.coerceIn(0f, Stats.MAX)
+    }
+
+    /** When your mind frays you start seeing things in the dark. They come closer, then vanish. */
+    private fun updatePhantoms() {
+        val lv = level
+        val it = phantoms.iterator()
+        while (it.hasNext()) {
+            val p = it.next()
+            p.ttl--
+            val dx = Integer.signum(px - p.x)
+            val dy = Integer.signum(py - p.y)
+            if (rnd.nextFloat() < 0.7f && lv.tile(p.x + dx, p.y + dy).walkable) {
+                p.x += dx
+                p.y += dy
+            }
+            if (DungeonGenerator.distance(p.x, p.y, px, py) <= 1) {
+                it.remove()
+                log("Something lunges at you... and dissolves. There was nothing there.")
+            } else if (p.ttl <= 0) {
+                it.remove()
+            }
+        }
+        val mind = state.stats.mind
+        if (mind >= HALLUCINATE_MIND || phantoms.size >= 3) return
+        if (rnd.nextFloat() > (HALLUCINATE_MIND - mind) / HALLUCINATE_MIND * 0.3f) return
+        repeat(10) {
+            val x = px + rnd.nextInt(-6, 7)
+            val y = py + rnd.nextInt(-6, 7)
+            val d = DungeonGenerator.distance(x, y, px, py)
+            if (d < 3 || !lv.inBounds(x, y) || !lv.tile(x, y).walkable || !lv.explored[lv.index(x, y)]) return@repeat
+            if (lv.monsterAt(x, y) != null) return@repeat
+            phantoms.add(Phantom(x, y, rnd.nextInt(3, 7), 8f + rnd.nextFloat() * 6f))
+            return
+        }
+    }
+
+    private fun whisper() {
+        if (state.stats.mind >= WHISPER_MIND || rnd.nextFloat() > 0.06f) return
+        log(whispers[rnd.nextInt(whispers.size)])
+    }
+
+    private val whispers = listOf(
+        "You hear scratching behind the walls.",
+        "Someone whispers your name.",
+        "Footsteps stop when you stop.",
+        "The dark feels like it is breathing.",
+        "You are sure something just moved at the edge of your light.",
+    )
 
     /** A slow heal while nothing is hunting you: one health every few turns. */
     private fun recoverWhenSafe() {
@@ -390,7 +534,8 @@ class DungeonRun(
     private fun actOnce(m: Monster, step: Int): Boolean {
         val lv = level
         val dist = DungeonGenerator.distance(m.x, m.y, px, py)
-        val sees = dist <= m.type.sight && Fov.los(lv, m.x, m.y, px, py)
+        val sight = if (lanternLit || lv.isLit(px, py)) m.type.sight else minOf(m.type.sight, DARK_MONSTER_SIGHT)
+        val sees = dist <= sight && Fov.los(lv, m.x, m.y, px, py)
         when (m.state) {
             AiState.SLEEPING -> {
                 if (step == 0 && sees && rnd.nextFloat() < 0.12f) wake(m)
@@ -415,7 +560,9 @@ class DungeonRun(
                     sees && dist in 1..m.type.range
                 }
                 if (canHit) {
-                    monsterAttack(m)
+                    // A fast monster may move twice, but never move and strike in the same turn:
+                    // you always get a turn to react once something reaches you.
+                    if (step == 0) monsterAttack(m)
                     return true
                 }
                 if (m.x == m.lastSeenX && m.y == m.lastSeenY && !sees) {
@@ -466,16 +613,20 @@ class DungeonRun(
     }
 
     private fun monsterAttack(m: Monster) {
+        val ranged = m.type.range > 1
+        val hidden = !level.visible[level.index(m.x, m.y)]
+        attacks.add(AttackEvent(m.x, m.y, px, py, ranged, hidden))
+        val who = if (hidden) "Something in the dark" else "The ${m.displayName}"
         val acc = (m.type.accuracy - armor * 0.02f).coerceIn(0.35f, 0.95f)
         if (rnd.nextFloat() > acc) {
-            log("The ${m.displayName} misses you.")
+            log(if (ranged) "$who spits at you and misses." else "$who misses you.")
             floatTexts.add(FloatText(px, py, "miss", FloatText.INFO))
             return
         }
         val base = rnd.nextInt(m.type.dmgMin, m.type.dmgMax + 1)
         val dmg = max(1, (base * m.dmgScale).toInt() - armor)
-        val verb = if (m.type.range > 1) "spits acid at you" else "hits you"
-        hurtPlayer(dmg, "The ${m.displayName} $verb")
+        val verb = if (ranged) "spits acid at you" else "hits you"
+        hurtPlayer(dmg, "$who $verb")
     }
 
     private fun log(text: String) {
@@ -495,5 +646,27 @@ class DungeonRun(
         const val MEDKIT_HEAL = 50f
         const val TURNS_PER_REGEN = 4
         const val TURN_SECONDS = 1.2f
+
+        // Light
+        const val LANTERN_RADIUS = 6
+        const val DARK_RADIUS = 1
+        const val DARK_MONSTER_SIGHT = 3
+        const val OIL_START = 100f
+        const val OIL_MAX = 100f
+        const val OIL_BURN = 0.25f
+        const val OIL_FLASK_AMOUNT = 40f
+
+        // Mind
+        const val RUINS_DREAD = 0.05f
+        const val DARK_DREAD = 0.6f
+        const val BRAZIER_CALM = 0.8f
+        const val PAIN_DREAD = 0.12f
+        const val TONIC_CALM = 30f
+        const val KILL_STEADY = 1.5f
+        const val BOSS_STEADY = 10f
+        const val PANIC_MIND = 15f
+        const val PANIC_ACCURACY_LOSS = 0.2f
+        const val HALLUCINATE_MIND = 35f
+        const val WHISPER_MIND = 50f
     }
 }

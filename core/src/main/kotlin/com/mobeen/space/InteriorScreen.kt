@@ -360,7 +360,7 @@ class InteriorScreen(
         val barY = h * 0.03f + barH * 3f
         shapes.begin(ShapeType.Filled)
         TouchHud.drawShapes(shapes, controls)
-        StatsHud.drawShapes(shapes, state.stats, barX, barY, barH * 9f, barH, gap, showAir = false, showShip = true, time = time)
+        StatsHud.drawShapes(shapes, state.stats, barX, barY, barH * 9f, barH, gap, showAir = false, showShip = true, time = time, showMind = true)
         if (menuOpen) drawMenuBackground(w, h)
         if (sleeping) {
             shapes.setColor(0f, 0f, 0f, sleepAlpha())
@@ -383,12 +383,12 @@ class InteriorScreen(
         val lh = font.lineHeight
         val margin = h * 0.03f
 
-        StatsHud.drawLabels(batch, font, state.stats, barX, barY, barH, gap, showAir = false, showShip = true)
+        StatsHud.drawLabels(batch, font, state.stats, barX, barY, barH, gap, showAir = false, showShip = true, showMind = true)
         TouchHud.drawLabels(batch, font, glyphs, controls)
         font.setColor(1f, 0.9f, 0.5f, 1f)
         font.draw(
             batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}",
-            barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true) + barH * 0.4f,
+            barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true, showMind = true) + barH * 0.4f,
         )
         font.setColor(0.8f, 0.9f, 1f, 0.9f)
         font.draw(batch, "THE SHIP", margin, h - margin)

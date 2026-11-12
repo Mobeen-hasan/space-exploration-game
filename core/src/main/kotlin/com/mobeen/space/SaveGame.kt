@@ -15,6 +15,7 @@ object SaveCodec {
             "energy" to st.energy.toString(),
             "food" to st.food.toString(),
             "air" to st.air.toString(),
+            "mind" to st.mind.toString(),
             "fuel" to st.fuel.toString(),
             "hull" to st.hull.toString(),
             "credits" to st.credits.toString(),
@@ -44,6 +45,7 @@ object SaveCodec {
             st.energy = m.getValue("energy").toFloat()
             st.food = m.getValue("food").toFloat()
             st.air = m.getValue("air").toFloat()
+            st.mind = m["mind"]?.toFloatOrNull() ?: Stats.MAX // older saves have no mind value
             st.fuel = m.getValue("fuel").toFloat()
             st.hull = m.getValue("hull").toFloat()
             st.credits = m.getValue("credits").toInt()

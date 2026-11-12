@@ -83,4 +83,18 @@ class SaveCodecTest {
         wrongVersion["v"] = "99"
         assertFalse(SaveCodec.decode(GameState(), wrongVersion))
     }
+
+    @Test
+    fun mindIsSavedAndOldSavesStartCalm() {
+        val a = filledState()
+        a.stats.mind = 37f
+        val b = GameState()
+        assertTrue(SaveCodec.decode(b, SaveCodec.encode(a)))
+        assertEquals(37f, b.stats.mind)
+
+        val old = SaveCodec.encode(a).filterKeys { it != "mind" }
+        val c = GameState()
+        assertTrue(SaveCodec.decode(c, old))
+        assertEquals(Stats.MAX, c.stats.mind)
+    }
 }

@@ -72,6 +72,7 @@ object DungeonGenerator {
         }
 
         addHazards(level, planet, rooms, start, end, rnd, difficulty)
+        addBraziers(level, depth, rooms, start, rnd)
         addMonsters(level, planet, depth, maxDepth, rooms, start, end, rnd, boss, difficulty)
         addItems(level, depth, maxDepth, rooms, start, end, rnd, boss, difficulty)
         return level
@@ -119,6 +120,39 @@ object DungeonGenerator {
             for (y in py until py + ph) for (x in px until px + pw) level.set(x, y, tile)
         }
     }
+
+    /**
+     * Fire bowls: one in the arrival room so you start in the light, and one more on the first floor.
+     * They stand inside rooms, away from the walls, so they never block a corridor.
+     */
+    private fun addBraziers(level: Level, depth: Int, rooms: List<Room>, start: Room, rnd: Random) {
+        val chosen = ArrayList<Room>()
+        chosen.add(start)
+        if (depth == 1) rooms.filter { it !== start }.randomOrNull(rnd)?.let { chosen.add(it) }
+        for (r in chosen) {
+            if (r.w < 3 || r.h < 3) continue
+            for (attempt in 0 until 20) {
+                val x = rnd.nextInt(r.x + 1, r.x + r.w - 1)
+                val y = rnd.nextInt(r.y + 1, r.y + r.h - 1)
+                if (level.tile(x, y) != Tile.FLOOR) continue
+                level.set(x, y, Tile.BRAZIER)
+                lightAround(level, x, y)
+                break
+            }
+        }
+    }
+
+    private fun lightAround(level: Level, bx: Int, by: Int) {
+        for (y in by - BRAZIER_RADIUS..by + BRAZIER_RADIUS) for (x in bx - BRAZIER_RADIUS..bx + BRAZIER_RADIUS) {
+            if (!level.inBounds(x, y)) continue
+            val dx = x - bx
+            val dy = y - by
+            if (dx * dx + dy * dy > BRAZIER_RADIUS * BRAZIER_RADIUS) continue
+            if (Fov.los(level, bx, by, x, y)) level.lit[level.index(x, y)] = true
+        }
+    }
+
+    const val BRAZIER_RADIUS = 4
 
     private fun <T> pick(rnd: Random, options: List<Pair<T, Int>>): T {
         var roll = rnd.nextInt(options.sumOf { it.second })
@@ -170,6 +204,7 @@ object DungeonGenerator {
         val table = listOf(
             ItemType.MEDKIT to 45, ItemType.RATION to 18, ItemType.STIM to 22,
             ItemType.CREDITS to 25, ItemType.BATON_MOD to 5, ItemType.ARMOR_PLATE to 5,
+            ItemType.OIL_FLASK to 18, ItemType.TONIC to 18,
         )
         fun place(type: ItemType) {
             val spot = randomFloorIn(level, rooms, rnd) ?: return
