@@ -59,6 +59,13 @@ class BountyBoard {
     var completedCount = 0
         private set
 
+    /** True once the target has been brought out of the ruins alive; the reward waits at the ship terminal. */
+    var captured = false
+        private set
+
+    /** The contract whose target still has to be found: null if there is none, or once they are in custody. */
+    val hunting: Contract? get() = active?.takeIf { !captured }
+
     /** Refreshes the list when a new day has begun (or while it is empty, in case planets are now in range). */
     fun refreshIfNeeded(state: GameState) {
         val day = state.stats.day
@@ -78,21 +85,41 @@ class BountyBoard {
     /** Gives up the current contract. It does not come back. */
     fun abandon() {
         active = null
+        captured = false
     }
 
-    fun completeActive(c: Contract) {
-        if (active?.id == c.id) {
-            active = null
-            completedCount++
-        }
+    /** The target was brought out of the ruins alive. */
+    fun markCaptured(c: Contract) {
+        if (active?.id == c.id) captured = true
+    }
+
+    /** Hand in a captured target at the terminal. Pays the reward and returns it, or 0 if there is nothing to submit. */
+    fun submit(stats: Stats): Int {
+        val c = active ?: return 0
+        if (!captured) return 0
+        stats.credits += c.reward
+        completedCount++
+        active = null
+        captured = false
+        return c.reward
+    }
+
+    /** Clears every contract. [keepRecord] keeps the count of bounties brought in (a hunter's legacy). */
+    fun reset(keepRecord: Boolean) {
+        available.clear()
+        active = null
+        captured = false
+        boardDay = 0
+        if (!keepRecord) completedCount = 0
     }
 
     fun encodeBoard(): String = available.joinToString(";") { it.encode() }
 
-    fun restore(day: Int, done: Int, activeText: String, boardText: String) {
+    fun restore(day: Int, done: Int, activeText: String, boardText: String, isCaptured: Boolean = false) {
         boardDay = day
         completedCount = done
         active = if (activeText.isBlank()) null else Contract.decode(activeText)
+        captured = isCaptured && active != null
         available.clear()
         boardText.split(";").filter { it.isNotBlank() }.mapNotNullTo(available) { Contract.decode(it) }
     }

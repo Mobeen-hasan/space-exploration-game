@@ -141,15 +141,36 @@ class DungeonRun(
     var facingX = 1
     var facingY = 0
 
-    /** Consumables carried. Mods and plating apply as soon as they are picked up. */
+    /**
+     * Consumables carried. You set out with what was in the ship's locker; if it was empty, the ship's
+     * emergency kit gives you one medkit. Mods and plating apply as soon as they are picked up.
+     */
     val pack = ArrayList<ItemType>().also { p ->
-        repeat(STARTING_MEDKITS) { p.add(ItemType.MEDKIT) }
-        repeat(STARTING_STIMS) { p.add(ItemType.STIM) }
+        p.addAll(state.locker.take(PACK_SIZE))
+        state.locker.clear()
+        if (p.isEmpty()) p.add(ItemType.MEDKIT)
     }
+
+    /** Extra baton damage from mods found on this trip. */
     var weaponBonus = 0
         private set
-    var armor = STARTING_ARMOR
-        private set
+
+    /** Extra armor from plates found on this trip. */
+    private var plates = 0
+
+    val weapon: Gear get() = state.loadout.weapon
+    val shield: Gear? get() = state.loadout.shield
+
+    /** Damage taken off every hit: your armor's rating plus any plates found on this trip. */
+    val armor: Int get() = state.loadout.armor.armor + plates
+
+    /** Spare gear you are carrying. Lost if you fall in the ruins. */
+    val bag: List<Gear> get() = state.loadout.bag
+
+    /** What each vial colour does on this trip, and which ones you have learned by drinking. */
+    private val vialEffects: Map<ItemType, VialEffect> =
+        ItemType.vials.zip(VialEffect.entries.shuffled(Random(seed xor 0x5EEDL))).toMap()
+    val knownVials = HashSet<ItemType>()
 
     val messages = ArrayList<String>()
     val floatTexts = ArrayList<FloatText>()
@@ -158,6 +179,10 @@ class DungeonRun(
     val attacks = ArrayList<AttackEvent>()
 
     private var calmTurns = 0
+
+    /** Hardcore only: whether this trip's one reprieve from a killing blow has been used. */
+    var lastStandUsed = false
+        private set
 
     /** Your lantern. Off saves oil and keeps you hidden, but you see almost nothing and dread builds fast. */
     var lanternOn = true
@@ -179,7 +204,7 @@ class DungeonRun(
     var dead = false
         private set
 
-    /** The contract's target has been brought in and the bounty paid. */
+    /** The contract's target has been captured. They still have to be brought out alive and submitted. */
     var completed = false
         private set
 
@@ -214,8 +239,8 @@ class DungeonRun(
         when (lv.tile(nx, ny)) {
             Tile.STAIRS_DOWN -> log("The stairs lead down to floor ${depth + 1}.")
             Tile.STAIRS_UP -> log(if (depth == 1) "This is the way out of the ruins." else "The stairs lead up to floor ${depth - 1}.")
-            Tile.LAVA -> hurtPlayer(Tile.LAVA.harm, "Lava scorches you")
-            Tile.ACID -> hurtPlayer(Tile.ACID.harm, "Acid burns you")
+            Tile.LAVA -> hurtPlayer(hazardDamage(Tile.LAVA), "Lava scorches you")
+            Tile.ACID -> hurtPlayer(hazardDamage(Tile.ACID), "Acid burns you")
             else -> {}
         }
         pickup(lv)
@@ -287,11 +312,50 @@ class DungeonRun(
                 floatTexts.add(FloatText(px, py, "+${TONIC_CALM.toInt()}", FloatText.HEAL))
                 log("You drink a calming tonic. Your hands stop shaking.")
             }
+            ItemType.VIAL_RED, ItemType.VIAL_GREEN, ItemType.VIAL_BLUE, ItemType.VIAL_AMBER, ItemType.VIAL_BLACK -> {
+                val type = pack[index]
+                pack.removeAt(index)
+                drinkVial(type)
+                endTurn()
+                return true
+            }
             else -> return false
         }
         pack.removeAt(index)
         endTurn()
         return true
+    }
+
+    /** Equip a piece of spare gear from your bag. Takes a turn. */
+    fun equipFromBag(index: Int): Boolean {
+        if (dead || exited) return false
+        val g = bag.getOrNull(index) ?: return false
+        state.loadout.equipFromBag(index)
+        log("You equip the ${g.name.lowercase()}.")
+        endTurn()
+        return true
+    }
+
+    /** The name to show for an item: vials you have drunk this trip show what they do. */
+    fun itemName(t: ItemType): String {
+        val effect = vialEffects[t]
+        return if (effect != null && t in knownVials) "${t.label} (${effect.label})" else t.label
+    }
+
+    /**
+     * Leaving the ruins alive: a captured target comes with you (submit them at the ship terminal), and whatever
+     * is left in your pack goes back to the ship's locker.
+     */
+    fun settleOnExit() {
+        if (completed && contract != null) state.bounties.markCaptured(contract)
+        for (t in pack) if (state.locker.size < GameState.LOCKER_SIZE) state.locker.add(t)
+        pack.clear()
+    }
+
+    /** Falling in the ruins: your pack and any spare gear are lost. What you have equipped stays with you. */
+    fun settleOnDeath() {
+        pack.clear()
+        state.loadout.bag.clear()
     }
 
     /** The route the player would walk to reach a known tile, or null. Monsters block the way. */
@@ -374,14 +438,15 @@ class DungeonRun(
 
     private fun attack(m: Monster) {
         val ambush = m.state == AiState.SLEEPING // a sleeping target cannot dodge
-        val accuracy = if (state.stats.mind < PANIC_MIND) PLAYER_ACCURACY - PANIC_ACCURACY_LOSS else PLAYER_ACCURACY
+        val aim = weapon.accuracy
+        val accuracy = if (state.stats.mind < PANIC_MIND) aim - PANIC_ACCURACY_LOSS else aim
         if (!ambush && rnd.nextFloat() > accuracy) {
             log("You miss the ${m.displayName}.")
             floatTexts.add(FloatText(m.x, m.y, "miss", FloatText.INFO))
             wake(m)
             return
         }
-        val dmg = (rnd.nextInt(BATON_MIN, BATON_MAX + 1) + weaponBonus) * (if (ambush) AMBUSH_MULTIPLIER else 1)
+        val dmg = (rnd.nextInt(weapon.dmgMin, weapon.dmgMax + 1) + weaponBonus) * (if (ambush) weapon.ambush else 1)
         m.hp -= dmg
         m.flash = 0.2f
         floatTexts.add(FloatText(m.x, m.y, "-$dmg", FloatText.HIT_MONSTER))
@@ -393,9 +458,12 @@ class DungeonRun(
             state.stats.mind = minOf(Stats.MAX, state.stats.mind + steadied)
             if (m.type.boss && contract != null && !completed) {
                 completed = true
-                state.stats.credits += contract.reward
-                state.bounties.completeActive(contract)
-                log("Bounty complete! ${m.displayName} is in custody. (+${contract.reward} credits)")
+                log("${m.displayName} is in custody! Get them out of the ruins alive, then submit the bounty at your ship terminal.")
+                val trophy = Loot.rollTrophy(rnd)
+                level.items.add(FloorItem(ItemType.GEAR, m.x, m.y, gear = trophy))
+                log("They drop a ${trophy.name.lowercase()}.")
+            } else if (rnd.nextFloat() < DROP_CHANCE && level.itemAt(m.x, m.y) == null) {
+                level.items.add(FloorItem(randomConsumable(), m.x, m.y))
             }
         } else {
             log(if (ambush) "You ambush the ${m.displayName} for $dmg!" else "You hit the ${m.displayName} for $dmg.")
@@ -412,10 +480,90 @@ class DungeonRun(
         m.lastSeenY = py
     }
 
+    /** Lava and acid hurt much less through a hazard suit. */
+    private fun hazardDamage(tile: Tile): Int =
+        if (state.loadout.armor.kind.hazardProof) max(1, tile.harm / 4) else tile.harm
+
+    private fun randomConsumable(): ItemType {
+        val roll = rnd.nextInt(100)
+        return when {
+            roll < 40 -> ItemType.vials[rnd.nextInt(ItemType.vials.size)]
+            roll < 60 -> ItemType.MEDKIT
+            roll < 75 -> ItemType.OIL_FLASK
+            roll < 90 -> ItemType.TONIC
+            else -> ItemType.STIM
+        }
+    }
+
+    /** A chest holds one thing: usually a piece of gear, otherwise a consumable. */
+    private fun openChest(lv: Level, chest: FloorItem) {
+        lv.items.remove(chest)
+        if (rnd.nextFloat() < CHEST_GEAR_CHANCE) {
+            val g = Loot.rollGear(depth, contract?.tier ?: 0, rnd)
+            if (bag.size < Loadout.BAG_SIZE) {
+                state.loadout.bag.add(g)
+                log("You pry open a chest: a ${g.name.lowercase()} (${g.describe()}). Press G to equip it.")
+            } else {
+                lv.items.add(FloorItem(ItemType.GEAR, px, py, gear = g))
+                log("You pry open a chest: a ${g.name.lowercase()}, but your bag is full.")
+            }
+        } else {
+            val t = randomConsumable()
+            if (pack.size < PACK_SIZE) {
+                pack.add(t)
+                log("You pry open a chest: a ${itemName(t).lowercase()}.")
+            } else {
+                lv.items.add(FloorItem(t, px, py))
+                log("You pry open a chest: a ${itemName(t).lowercase()}, but your pack is full.")
+            }
+        }
+    }
+
+    /** Drink an unknown vial. After the first, you know what that colour does for the rest of the trip. */
+    private fun drinkVial(type: ItemType) {
+        val effect = vialEffects.getValue(type)
+        val wasKnown = type in knownVials
+        knownVials.add(type)
+        val stats = state.stats
+        val what = when (effect) {
+            VialEffect.HEAL -> {
+                stats.health = minOf(Stats.MAX, stats.health + 30f)
+                floatTexts.add(FloatText(px, py, "+30", FloatText.HEAL))
+                "Warmth spreads through you. (+30 health)"
+            }
+            VialEffect.CALM -> {
+                stats.mind = minOf(Stats.MAX, stats.mind + 25f)
+                "Your thoughts settle. (+25 mind)"
+            }
+            VialEffect.ENERGY -> {
+                stats.energy = minOf(Stats.MAX, stats.energy + 40f)
+                "Your tiredness burns away. (+40 energy)"
+            }
+            VialEffect.POISON -> {
+                hurtPlayer(15, "")
+                "It burns all the way down. Poison! (-15 health)"
+            }
+            VialEffect.NIGHTMARE -> {
+                if (!stats.invulnerable) stats.mind = max(0f, stats.mind - 20f)
+                "The walls start to breathe. (-20 mind)"
+            }
+        }
+        log("You drink the ${type.label.lowercase()}. $what" + if (!wasKnown) " It was ${effect.label}." else "")
+    }
+
     private fun hurtPlayer(amount: Int, why: String) {
         val stats = state.stats
         if (stats.invulnerable) { // developer god mode
             floatTexts.add(FloatText(px, py, "0", FloatText.INFO))
+            return
+        }
+        if (state.hardcore && !lastStandUsed && stats.health - amount <= 0f) {
+            // Last stand: once per trip, a blow that would end a Hardcore hunter leaves them barely standing.
+            lastStandUsed = true
+            stats.health = 1f
+            floatTexts.add(FloatText(px, py, "last stand", FloatText.HIT_PLAYER))
+            if (why.isNotEmpty()) log("$why!")
+            log("You should be dead. Somehow you are still standing. (Last stand: once per trip.)")
             return
         }
         stats.health = max(0f, stats.health - amount)
@@ -442,15 +590,26 @@ class DungeonRun(
                 log("You fit a mod to your baton. (+3 damage)")
             }
             ItemType.ARMOR_PLATE -> {
-                armor += 2
+                plates += 2
                 lv.items.remove(item)
                 log("You strap on an armor plate. (-2 damage taken)")
             }
+            ItemType.GEAR -> {
+                val g = item.gear ?: return
+                if (bag.size < Loadout.BAG_SIZE) {
+                    state.loadout.bag.add(g)
+                    lv.items.remove(item)
+                    log("You pick up a ${g.name.lowercase()} (${g.describe()}). Press G to equip it.")
+                } else {
+                    log("Your bag is full. You leave the ${g.name.lowercase()}.")
+                }
+            }
+            ItemType.CHEST -> openChest(lv, item)
             else -> {
                 if (pack.size < PACK_SIZE) {
                     pack.add(item.type)
                     lv.items.remove(item)
-                    log("You pick up a ${item.type.label.lowercase()}.")
+                    log("You pick up a ${itemName(item.type).lowercase()}.")
                 } else {
                     log("Your pack is full.")
                 }
@@ -678,6 +837,12 @@ class DungeonRun(
             floatTexts.add(FloatText(px, py, "miss", FloatText.INFO))
             return
         }
+        val block = if (ranged) shield?.rangedBlock ?: 0f else shield?.meleeBlock ?: 0f
+        if (block > 0f && rnd.nextFloat() < block) {
+            log(if (ranged) "You catch the spit on your shield." else "You block the blow with your shield.")
+            floatTexts.add(FloatText(px, py, "block", FloatText.INFO))
+            return
+        }
         val base = rnd.nextInt(m.type.dmgMin, m.type.dmgMax + 1)
         val dmg = max(1, (base * m.dmgScale).toInt() - armor)
         val verb = if (ranged) "spits acid at you" else "hits you"
@@ -690,6 +855,7 @@ class DungeonRun(
     }
 
     companion object {
+        // The starting stun baton's numbers (see GearKind.STUN_BATON).
         const val PLAYER_ACCURACY = 0.92f
         const val BATON_MIN = 8
         const val BATON_MAX = 16
@@ -697,7 +863,9 @@ class DungeonRun(
         const val PACK_SIZE = 6
         const val STARTING_MEDKITS = 2
         const val STARTING_STIMS = 1
-        const val STARTING_ARMOR = 1 // a ship-issue vest
+        const val STARTING_ARMOR = 1 // the ship-issue vest
+        const val DROP_CHANCE = 0.12f
+        const val CHEST_GEAR_CHANCE = 0.55f
         const val MEDKIT_HEAL = 50f
         const val TURNS_PER_REGEN = 4
         const val TURN_SECONDS = 1.2f

@@ -23,6 +23,32 @@ object GdxTestEnv {
     var delta = 1f / 60f
     var flushCount = 0
 
+    /** Saved preferences by file name, kept in memory so tests can check what was saved where. */
+    val saved = HashMap<String, HashMap<String, Any?>>()
+    private val prefsByName = HashMap<String, Preferences>()
+
+    fun resetSaves() {
+        saved.clear()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun prefsFor(name: String): Preferences = prefsByName.getOrPut(name) {
+        proxy(Preferences::class.java) { method, a ->
+            val store = saved.getOrPut(name) { HashMap() }
+            when (method) {
+                "flush" -> { flushCount++; null }
+                "put" -> { store.putAll(a[0] as Map<String, Any?>); null }
+                "putString", "putBoolean", "putInteger", "putLong", "putFloat" -> { store[a[0] as String] = a[1]; null }
+                "contains" -> store.containsKey(a[0] as String)
+                "get" -> HashMap(store)
+                "getString" -> (store[a[0] as String] as? String) ?: (a.getOrNull(1) as? String ?: "")
+                "remove" -> { store.remove(a[0] as String); null }
+                "clear" -> { store.clear(); null }
+                else -> unhandled
+            }
+        }
+    }
+
     private var installed = false
     private val unhandled = Any()
 
@@ -75,15 +101,11 @@ object GdxTestEnv {
         Gdx.gl = gl
         Gdx.gl20 = gl
 
-        val prefs = proxy(Preferences::class.java) { name, _ ->
-            if (name == "flush") flushCount++
-            unhandled
-        }
         Gdx.app = proxy(Application::class.java) { name, a ->
             when (name) {
                 "postRunnable" -> { pending.add(a[0] as Runnable); null }
                 "getType" -> Application.ApplicationType.Desktop
-                "getPreferences" -> prefs
+                "getPreferences" -> prefsFor(a[0] as String)
                 else -> unhandled
             }
         }
@@ -108,13 +130,14 @@ object GdxTestEnv {
 }
 
 /** Drives a real [SpaceGame] one frame at a time, the way the desktop launcher would. */
-class GameHarness(devMode: Boolean = false) {
-    val game = SpaceGame(devMode)
+class GameHarness(devMode: Boolean = false, startOnTitle: Boolean = false) {
+    val game = SpaceGame(devMode, startOnTitle)
     val state get() = game.state
     val screen get() = game.screen
 
     init {
         GdxTestEnv.install()
+        GdxTestEnv.resetSaves()
         GdxTestEnv.pending.clear()
         GdxTestEnv.pressed = emptySet()
         GdxTestEnv.held = emptySet()

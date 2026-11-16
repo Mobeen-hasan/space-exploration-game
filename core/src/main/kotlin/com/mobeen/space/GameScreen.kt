@@ -54,6 +54,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
     }
 
     override fun show() {
+        chase.snapTo(ship)
         state.pendingNotice?.let {
             showToast(it)
             state.pendingNotice = null
@@ -74,6 +75,10 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val h = Gdx.graphics.height.toFloat()
 
         if (game.devMenu.frame(game.devMode, w, h) { devOptions() }) { // paused while the developer menu is open
+            drawFrame(w, h)
+            return
+        }
+        if (game.pauseMenu.frame(w, h, blocked = false, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }) {
             drawFrame(w, h)
             return
         }
@@ -120,12 +125,13 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
 
         hudViewport.apply()
         drawHud(w, h)
+        game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }
 
     private fun devOptions(): List<DevOption> {
         val list = ArrayList(DevMenu.common(state))
-        state.bounties.active?.let { c ->
+        state.bounties.hunting?.let { c ->
             list.add(DevOption("Fly to the bounty target (${c.planetName}) and land") { SaveCodec.planetFromId(c.planetId)?.let { devLandOn(it) } })
         }
         list.add(DevOption("Land on the nearest planet") {
@@ -366,7 +372,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val cx = w - radius - margin
         val cy = h - radius - margin
         val scale = radius / RADAR_RANGE
-        val targetId = state.bounties.active?.planetId
+        val targetId = state.bounties.hunting?.planetId
 
         shapes.setColor(0.03f, 0.07f, 0.12f, 0.6f)
         shapes.circle(cx, cy, radius, 48)
@@ -468,7 +474,13 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         font.draw(batch, "SPEED  ${ship.vel.len().toInt()}", margin, h - margin)
         font.draw(batch, "DISCOVERED  ${discovered.size}", margin, h - margin - lh)
         font.draw(batch, "POS  ${(ship.pos.x / 10f).toInt()}, ${(ship.pos.y / 10f).toInt()}", margin, h - margin - lh * 2f)
-        state.bounties.active?.let { c ->
+        val board = state.bounties
+        val ready = board.active?.takeIf { board.captured }
+        if (ready != null) {
+            font.setColor(1f, 0.82f, 0.3f, 1f)
+            font.draw(batch, "BOUNTY: ${ready.target} in custody - submit at your ship terminal (press I)", margin, h - margin - lh * 3f)
+        }
+        board.hunting?.let { c ->
             val target = targetPlanet(c)
             val away = if (target != null) hypot(target.x - ship.pos.x, target.y - ship.pos.y) else 0f
             font.setColor(1f, 0.82f, 0.3f, 1f)

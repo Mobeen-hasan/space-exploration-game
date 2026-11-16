@@ -37,7 +37,7 @@ class InteriorScreen(
         COCKPIT(690f, "COCKPIT"),
     }
 
-    private enum class MenuPage { MAIN, BOUNTIES }
+    private enum class MenuPage { MAIN, BOUNTIES, SHOP, GEAR }
 
     private class Option(val label: String, val enabled: Boolean, val detail: String? = null, val run: () -> Unit)
 
@@ -128,8 +128,11 @@ class InteriorScreen(
         val h = Gdx.graphics.height.toFloat()
         val stats = state.stats
 
-        if (game.devMenu.frame(game.devMode, w, h) { DevMenu.common(state) }) { // paused while the developer menu is open
+        val paused = game.devMenu.frame(game.devMode, w, h) { DevMenu.common(state) } ||
+            game.pauseMenu.frame(w, h, blocked = menuOpen || sleeping, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }
+        if (paused) { // the developer menu or the pause menu is open
             draw(w, h, nearestStation())
+            game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
             game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
             return
         }
@@ -161,6 +164,7 @@ class InteriorScreen(
         }
 
         draw(w, h, station)
+        game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }
 
@@ -228,15 +232,68 @@ class InteriorScreen(
                 if (st.emergencyFuel()) showToast("Reserve tank released.")
             },
             Option(
-                if (active != null) "Bounty board   (contract active)" else "Bounty board   (${state.bounties.available.size} listed)",
+                when {
+                    active != null && state.bounties.captured -> "Bounty board   (READY TO SUBMIT)"
+                    active != null -> "Bounty board   (contract active)"
+                    else -> "Bounty board   (${state.bounties.available.size} listed)"
+                },
                 true,
             ) {
                 state.bounties.refreshIfNeeded(state)
                 menuPage = MenuPage.BOUNTIES
                 menuSel = 0
             },
+            Option("Supply shop   (locker ${state.locker.size}/${GameState.LOCKER_SIZE})", true) {
+                menuPage = MenuPage.SHOP
+                menuSel = 0
+            },
+            Option("Gear locker   (${state.loadout.bag.size} spare)", true) {
+                menuPage = MenuPage.GEAR
+                menuSel = 0
+            },
             Option("Close", true) { closeMenu() },
         )
+    }
+
+    private fun lockerLine(): String =
+        "Locker (${state.locker.size}/${GameState.LOCKER_SIZE}): " +
+            (if (state.locker.isEmpty()) "empty" else state.locker.joinToString(", ") { it.label }) +
+            ".\nIt all goes into your pack when you enter the ruins."
+
+    private fun shopOptions(): List<Option> {
+        val list = ArrayList<Option>()
+        for ((type, price) in Shop.prices) {
+            list.add(Option("Buy ${type.label.lowercase()}   ($price credits)", Shop.canBuy(state, type), lockerLine()) {
+                if (Shop.buy(state, type)) showToast("Bought a ${type.label.lowercase()}. (-$price credits)")
+            })
+        }
+        list.add(Option("Back", true, lockerLine()) {
+            menuPage = MenuPage.MAIN
+            menuSel = 0
+        })
+        return list
+    }
+
+    private fun gearOptions(): List<Option> {
+        val lo = state.loadout
+        val list = ArrayList<Option>()
+        list.add(Option("Weapon: ${lo.weapon.name}", false, lo.weapon.describe()) {})
+        list.add(Option("Armor: ${lo.armor.name}", false, lo.armor.describe()) {})
+        list.add(Option("Shield: ${lo.shield?.name ?: "none"}", false, lo.shield?.describe()) {})
+        for ((i, g) in lo.bag.withIndex()) {
+            val current = lo.equipped(g.slot)
+            val compare = "Now: ${current?.let { "${it.name} (${it.describe()})" } ?: "nothing"}\nThis: ${g.describe()}"
+            list.add(Option("Equip ${g.name}", true, compare) {
+                if (lo.equipFromBag(i)) showToast("You equip the ${g.name.lowercase()}.")
+                menuSel = 0
+            })
+        }
+        if (lo.bag.isEmpty()) list.add(Option("No spare gear. Find it in chests or take it from bounty targets.", false) {})
+        list.add(Option("Back", true) {
+            menuPage = MenuPage.MAIN
+            menuSel = 0
+        })
+        return list
     }
 
     /** Two lines of facts about a contract: the crime, then the world and how dangerous the trip is. */
@@ -251,7 +308,13 @@ class InteriorScreen(
         val board = state.bounties
         val active = board.active
         val list = ArrayList<Option>()
-        if (active != null) {
+        if (active != null && board.captured) {
+            list.add(Option("SUBMIT: ${active.target}  -  ${active.reward} credits", true, "${active.target} is in your hold. Hand them over and get paid.") {
+                val paid = board.submit(state.stats)
+                if (paid > 0) showToast("Bounty submitted: ${active.target}. (+$paid credits)", 4f)
+                menuSel = 0
+            })
+        } else if (active != null) {
             list.add(Option("ACTIVE: ${active.summary()}", false, contractDetail(active)) {})
             list.add(Option("Abandon this contract", true, "You will not get it back, and the reward is lost.") {
                 board.abandon()
@@ -277,14 +340,19 @@ class InteriorScreen(
         return list
     }
 
-    private fun options(): List<Option> = if (menuPage == MenuPage.MAIN) mainOptions() else bountyOptions()
+    private fun options(): List<Option> = when (menuPage) {
+        MenuPage.MAIN -> mainOptions()
+        MenuPage.BOUNTIES -> bountyOptions()
+        MenuPage.SHOP -> shopOptions()
+        MenuPage.GEAR -> gearOptions()
+    }
 
     private fun handleMenuInput(w: Float, h: Float) {
         val options = options()
         if (menuSel >= options.size) menuSel = options.size - 1
         val input = Gdx.input
         if (input.isKeyJustPressed(Input.Keys.ESCAPE)) {
-            if (menuPage == MenuPage.BOUNTIES) {
+            if (menuPage != MenuPage.MAIN) {
                 menuPage = MenuPage.MAIN
                 menuSel = 0
             } else {
@@ -398,11 +466,13 @@ class InteriorScreen(
             barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true, showMind = true) + barH * 0.4f,
         )
         font.setColor(0.8f, 0.9f, 1f, 0.9f)
-        font.draw(batch, "THE SHIP", margin, h - margin)
+        font.draw(batch, "THE SHIP" + if (state.hardcore) "   (Hardcore: one life)" else "", margin, h - margin)
         font.draw(batch, "A / D: walk    E: use    Touch: left stick walks, green button uses", margin, h - margin - lh)
         state.bounties.active?.let {
             font.setColor(1f, 0.82f, 0.3f, 1f)
-            font.draw(batch, "BOUNTY: ${it.target} on ${it.planetName} (${it.reward} cr)", margin, h - margin - lh * 2f)
+            val line = if (state.bounties.captured) "BOUNTY: ${it.target} is in your hold - submit at the terminal for ${it.reward} cr"
+            else "BOUNTY: ${it.target} on ${it.planetName} (${it.reward} cr)"
+            font.draw(batch, line, margin, h - margin - lh * 2f)
         }
 
         if (!menuOpen && !sleeping && station != null) {
@@ -452,7 +522,12 @@ class InteriorScreen(
         val options = options()
         val p = menuPanel(w, h, options.size)
         font.setColor(0.5f, 1f, 0.7f, 1f)
-        val title = if (menuPage == MenuPage.MAIN) "SHIP TERMINAL" else "BOUNTY BOARD"
+        val title = when (menuPage) {
+            MenuPage.MAIN -> "SHIP TERMINAL"
+            MenuPage.BOUNTIES -> "BOUNTY BOARD"
+            MenuPage.SHOP -> "SUPPLY SHOP"
+            MenuPage.GEAR -> "GEAR LOCKER"
+        }
         font.draw(batch, "$title      Credits: ${state.stats.credits}", p[0] + lh, p[1] + p[3] - lh * 0.8f)
         for ((i, o) in options.withIndex()) {
             val r = menuRow(w, h, i, options.size)

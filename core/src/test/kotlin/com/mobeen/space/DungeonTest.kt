@@ -418,36 +418,56 @@ class DungeonTest {
         assertFalse(run.useStairs(), "no more actions after leaving")
     }
 
-    @Test
-    fun defeatingTheTargetPaysTheContractOnceAndClearsIt() {
-        val state = GameState()
-        val c = contractFor(planet, tier = 2, reward = 480)
+    private fun captureTarget(state: GameState, c: Contract): DungeonRun {
         state.bounties.available.add(c)
         assertTrue(state.bounties.accept(c))
         val run = DungeonRun(planet, state, 1L, Random(7), contract = c)
-        repeat(2) {
-            run.px = run.level.downArriveX
-            run.py = run.level.downArriveY
-            run.tryMove(1, 0)
-            run.useStairs()
-        }
-        assertEquals(3, run.depth)
+        while (run.devDescend()) Unit
         val boss = run.level.monsters.first { it.type.boss }
         clearArena(run)
         boss.x = run.px + 1
         boss.y = run.py
         boss.hp = 1
         run.level.monsters.add(boss)
-
-        val credits = state.stats.credits
         var swings = 0
         while (!run.completed && swings < 30) { run.tryMove(1, 0); swings++ }
         assertTrue(run.completed)
-        assertEquals(credits + 480, state.stats.credits)
+        return run
+    }
+
+    @Test
+    fun defeatingTheTargetCapturesThemButPaysNothingYet() {
+        val state = GameState()
+        val c = contractFor(planet, tier = 2, reward = 480)
+        val credits = state.stats.credits
+        val run = captureTarget(state, c)
+        assertEquals(credits, state.stats.credits, "no money until the bounty is submitted")
         assertEquals(480, run.reward)
-        assertNull(state.bounties.active, "the contract is used up")
+        assertFalse(state.bounties.captured, "not until you get them out")
+        assertTrue(run.messages.any { it.contains("in custody") && it.contains(c.target) })
+    }
+
+    @Test
+    fun gettingOutAliveLetsYouSubmitTheBounty() {
+        val state = GameState()
+        val c = contractFor(planet, tier = 1, reward = 300)
+        val run = captureTarget(state, c)
+        run.settleOnExit()
+        assertTrue(state.bounties.captured)
+        val credits = state.stats.credits
+        assertEquals(300, state.bounties.submit(state.stats))
+        assertEquals(credits + 300, state.stats.credits)
         assertEquals(1, state.bounties.completedCount)
-        assertTrue(run.messages.any { it.contains("Bounty complete") && it.contains(c.target) })
+    }
+
+    @Test
+    fun fallingWithACaptiveLetsThemEscapeAndTheContractStaysOpen() {
+        val state = GameState()
+        val c = contractFor(planet, tier = 1, reward = 300)
+        val run = captureTarget(state, c)
+        run.settleOnDeath()
+        assertFalse(state.bounties.captured)
+        assertEquals(c, state.bounties.hunting, "the target is back on the loose")
     }
 
     @Test
@@ -912,5 +932,173 @@ class DungeonTest {
         val a = run.attacks.first()
         assertTrue(a.hidden)
         assertTrue(run.messages.any { it.startsWith("Something in the dark") })
+    }
+
+    // ------------------------------------------------------------------ loot
+
+    private fun swings(run: DungeonRun, state: GameState, count: Int, dummy: Monster): List<Int> {
+        val hits = ArrayList<Int>()
+        repeat(count) {
+            state.stats.health = 100f
+            state.stats.mind = 100f
+            val before = dummy.hp
+            run.tryMove(dummy.x - run.px, dummy.y - run.py)
+            if (dummy.hp < before) hits.add(before - dummy.hp)
+        }
+        return hits
+    }
+
+    @Test
+    fun theEquippedWeaponSetsDamageAndAmbushStrength() {
+        val (run, state) = newRun(rndSeed = 3)
+        clearArena(run)
+        state.loadout.weapon = Gear(GearKind.PIPE_CLUB)
+        val dummy = Monster(MonsterType.HUSK, run.px + 1, run.py, 1_000_000, 0f, AiState.WANDERING)
+        run.level.monsters.add(dummy)
+        val hits = swings(run, state, 120, dummy)
+        assertTrue(hits.isNotEmpty())
+        assertTrue(hits.all { it in 12..22 }, "pipe club hits should be 12-22: ${hits.distinct().sorted()}")
+
+        val (run2, state2) = newRun(rndSeed = 3)
+        clearArena(run2)
+        state2.loadout.weapon = Gear(GearKind.SHOCK_KNIFE)
+        val sleeper = Monster(MonsterType.BRUTE, run2.px + 1, run2.py, 1000, 0f, AiState.SLEEPING)
+        run2.level.monsters.add(sleeper)
+        run2.tryMove(1, 0)
+        assertTrue(1000 - sleeper.hp in 6 * 4..12 * 4, "a shock knife ambush hits four times as hard")
+    }
+
+    @Test
+    fun aShieldBlocksSomeBlowsAndOnlyTheRightKind() {
+        fun blocks(shield: Gear?, ranged: Boolean): Int {
+            val (run, state) = newRun(rndSeed = 8)
+            clearArena(run, 6)
+            state.loadout.shield = shield
+            val type = if (ranged) MonsterType.SPITTER else MonsterType.HUSK
+            val m = Monster(type, run.px + if (ranged) 3 else 1, run.py, 1_000_000, 0f, AiState.HUNTING)
+            run.level.monsters.add(m)
+            repeat(300) {
+                state.stats.health = 100f
+                state.stats.mind = 100f
+                run.waitTurn()
+            }
+            return run.floatTexts.count { it.text == "block" } // the message log only keeps its last lines
+        }
+        assertEquals(0, blocks(null, ranged = false))
+        assertTrue(blocks(Gear(GearKind.RIOT_SHIELD), ranged = false) > 10)
+        assertEquals(0, blocks(Gear(GearKind.RIOT_SHIELD), ranged = true), "a riot shield does not stop spit")
+        assertTrue(blocks(Gear(GearKind.ARC_BUCKLER), ranged = true) > 5)
+    }
+
+    @Test
+    fun aHazardSuitTakesMostOfTheBiteOutOfLava() {
+        val (run, state) = newRun()
+        clearArena(run)
+        state.loadout.armor = Gear(GearKind.HAZARD_SUIT)
+        run.level.set(run.px + 1, run.py, Tile.LAVA)
+        val before = state.stats.health
+        run.tryMove(1, 0)
+        assertEquals(before - Tile.LAVA.harm / 4, state.stats.health, 1.5f)
+    }
+
+    @Test
+    fun chestsHoldGearOrASupply() {
+        var gearFound = 0
+        var suppliesFound = 0
+        for (seed in 1..30) {
+            val (run, state) = newRun(rndSeed = seed)
+            clearArena(run)
+            run.pack.clear()
+            run.level.items.add(FloorItem(ItemType.CHEST, run.px + 1, run.py))
+            run.tryMove(1, 0)
+            assertTrue(run.level.items.none { it.type == ItemType.CHEST }, "the chest is opened")
+            assertTrue(run.messages.any { it.contains("pry open") })
+            if (state.loadout.bag.isNotEmpty()) gearFound++
+            if (run.pack.isNotEmpty()) suppliesFound++
+        }
+        assertTrue(gearFound > 5 && suppliesFound > 5, "gear $gearFound, supplies $suppliesFound")
+        assertTrue(DungeonGenerator.generate(planet, 3, 3, Random(1)).items.any { it.type == ItemType.CHEST }, "the last floor always has a chest")
+    }
+
+    @Test
+    fun vialsAreUnknownUntilDrunkAndEachColourKeepsItsEffect() {
+        val (run, state) = newRun(seed = 21)
+        clearArena(run)
+        run.pack.clear()
+        run.pack.addAll(listOf(ItemType.VIAL_RED, ItemType.VIAL_RED))
+        assertEquals("Red vial", run.itemName(ItemType.VIAL_RED))
+        state.stats.health = 50f
+        state.stats.mind = 60f
+        run.useItem(0)
+        assertTrue(ItemType.VIAL_RED in run.knownVials)
+        val named = run.itemName(ItemType.VIAL_RED)
+        assertTrue(named.startsWith("Red vial (") && named.endsWith(")"), named)
+        val effect = named.substringAfter("(").substringBefore(")")
+        run.useItem(0)
+        assertTrue(run.messages.last().contains(effect) || run.messages.takeLast(3).any { it.contains("drink the red vial") })
+        assertEquals(VialEffect.entries.size, ItemType.vials.map { c -> c }.size, "one colour per effect")
+    }
+
+    @Test
+    fun theTargetDropsATrophy() {
+        val state = GameState()
+        val c = contractFor(planet, tier = 1, reward = 300)
+        state.bounties.available.add(c)
+        state.bounties.accept(c)
+        val run = DungeonRun(planet, state, 1L, Random(7), contract = c)
+        while (run.devDescend()) Unit
+        val boss = run.level.monsters.first { it.type.boss }
+        clearArena(run)
+        boss.x = run.px + 1
+        boss.y = run.py
+        boss.hp = 1
+        run.level.monsters.add(boss)
+        var tries = 0
+        while (!run.completed && tries++ < 20) run.tryMove(1, 0)
+        val trophy = run.level.items.firstOrNull { it.type == ItemType.GEAR }
+        val gear = assertNotNull(trophy?.gear)
+        assertTrue(gear.quality == Quality.FINE || gear.quality == Quality.RARE)
+    }
+
+    @Test
+    fun equippingFromTheBagTakesATurnAndSwaps() {
+        val (run, state) = newRun()
+        clearArena(run)
+        state.loadout.bag.add(Gear(GearKind.ARC_SABER))
+        val turn = run.turn
+        assertTrue(run.equipFromBag(0))
+        assertEquals(turn + 1, run.turn)
+        assertEquals(GearKind.ARC_SABER, run.weapon.kind)
+        assertEquals(GearKind.STUN_BATON, state.loadout.bag.single().kind)
+    }
+
+    @Test
+    fun yourPackComesFromTheLockerAndGoesBackIfYouSurvive() {
+        val state = GameState()
+        state.locker.clear()
+        state.locker.addAll(listOf(ItemType.TONIC, ItemType.OIL_FLASK))
+        val run = DungeonRun(planet, state, 1L, Random(1))
+        assertEquals(listOf(ItemType.TONIC, ItemType.OIL_FLASK), run.pack)
+        assertTrue(state.locker.isEmpty())
+        run.settleOnExit()
+        assertEquals(listOf(ItemType.TONIC, ItemType.OIL_FLASK), state.locker)
+
+        state.locker.clear()
+        val broke = DungeonRun(planet, state, 2L, Random(1))
+        assertEquals(listOf(ItemType.MEDKIT), broke.pack, "an empty locker still gives the emergency medkit")
+    }
+
+    @Test
+    fun fallingInTheRuinsLosesThePackAndSpareGearButNotWhatYouWear() {
+        val state = GameState()
+        state.loadout.bag.add(Gear(GearKind.RIOT_SHIELD))
+        state.loadout.equipFromBag(0)
+        state.loadout.bag.add(Gear(GearKind.PIPE_CLUB, Quality.RARE))
+        val run = DungeonRun(planet, state, 1L, Random(1))
+        run.settleOnDeath()
+        assertTrue(run.pack.isEmpty())
+        assertTrue(state.loadout.bag.isEmpty(), "spare gear is lost")
+        assertEquals(GearKind.RIOT_SHIELD, state.loadout.shield?.kind, "equipped gear stays")
+        assertTrue(state.locker.isEmpty(), "nothing returns to the locker")
     }
 }

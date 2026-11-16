@@ -69,9 +69,29 @@ enum class ItemType(val label: String, val consumable: Boolean) {
     ARMOR_PLATE("Armor plate", false),
     OIL_FLASK("Oil flask", true),
     TONIC("Calming tonic", true),
+
+    /** A weapon, armor or shield lying on the floor (see [FloorItem.gear]). */
+    GEAR("Gear", false),
+
+    /** Opened by stepping onto it. Holds a piece of gear or a consumable. */
+    CHEST("Chest", false),
+
+    // Unknown vials: what each colour does is shuffled on every trip.
+    VIAL_RED("Red vial", true),
+    VIAL_GREEN("Green vial", true),
+    VIAL_BLUE("Blue vial", true),
+    VIAL_AMBER("Amber vial", true),
+    VIAL_BLACK("Black vial", true),
+    ;
+
+    val isVial: Boolean get() = name.startsWith("VIAL_")
+
+    companion object {
+        val vials: List<ItemType> get() = entries.filter { it.isVial }
+    }
 }
 
-class FloorItem(val type: ItemType, val x: Int, val y: Int, val amount: Int = 0)
+class FloorItem(val type: ItemType, val x: Int, val y: Int, val amount: Int = 0, val gear: Gear? = null)
 
 /** A monster's attack on the player, so the screen can show where it came from. */
 class AttackEvent(val fromX: Int, val fromY: Int, val toX: Int, val toY: Int, val ranged: Boolean, val hidden: Boolean)

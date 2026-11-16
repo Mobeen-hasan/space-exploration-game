@@ -82,8 +82,11 @@ class SurfaceScreen(
 
         val dw = Gdx.graphics.width.toFloat()
         val dh = Gdx.graphics.height.toFloat()
-        if (game.devMenu.frame(game.devMode, dw, dh) { devOptions() }) { // paused while the developer menu is open
+        val paused = game.devMenu.frame(game.devMode, dw, dh) { devOptions() } ||
+            game.pauseMenu.frame(dw, dh, blocked = false, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }
+        if (paused) { // the developer menu or the pause menu is open
             draw(dw, dh, abs(terrain.padOffset(player.x)) < BOARD_RANGE)
+            game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, dw, dh)
             game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, dw, dh, state.stats.invulnerable)
             return
         }
@@ -134,6 +137,7 @@ class SurfaceScreen(
         camera.update()
 
         draw(w, h, nearShip)
+        game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }
 
@@ -252,7 +256,7 @@ class SurfaceScreen(
         font.draw(batch, "%02d:%02d   %s world".format(hours, minutes, planet.type.label), margin, h - margin - lh)
         font.draw(batch, "Gravity ${"%.2f".format(planet.gravityG)} g    ${planet.temperatureC} C", margin, h - margin - lh * 2f)
         font.draw(batch, "Atmosphere: ${planet.atmosphere}", margin, h - margin - lh * 3f)
-        state.bounties.active?.takeIf { it.planetId == planet.id }?.let {
+        state.bounties.hunting?.takeIf { it.planetId == planet.id }?.let {
             font.setColor(1f, 0.82f, 0.3f, 1f)
             font.draw(batch, "BOUNTY TARGET HERE: ${it.target} - follow the gold beam to the ruins", margin, h - margin - lh * 4f)
         }
@@ -281,7 +285,7 @@ class SurfaceScreen(
         }
     }
 
-    private fun isBountyPlanet(): Boolean = state.bounties.active?.planetId == planet.id
+    private fun isBountyPlanet(): Boolean = state.bounties.hunting?.planetId == planet.id
 
     private fun drawWarnings(w: Float, h: Float) {
         val lh = font.lineHeight

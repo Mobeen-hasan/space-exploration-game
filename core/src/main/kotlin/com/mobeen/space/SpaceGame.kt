@@ -5,17 +5,49 @@ import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.Screen
 
 /** [devMode] turns on the developer menu (start the desktop game with `--dev`). */
-class SpaceGame(val devMode: Boolean = false) : Game() {
+/**
+ * [devMode] turns on the developer menu (start the desktop game with `--dev`).
+ * [startOnTitle] shows the title screen first; tests turn it off to start straight in space.
+ */
+class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean = true) : Game() {
     val state = GameState()
     val devMenu = DevMenu()
+    val pauseMenu = PauseMenu()
     private lateinit var space: GameScreen
     private var transient: Screen? = null // the surface or interior screen currently in use
     private var pendingSwitch: (() -> Screen)? = null
 
+    /** True while a game is being played (not on the title screen). Only then is it saved on exit. */
+    var inGame = false
+        private set
+
     override fun create() {
-        SaveStore.load(state) // continue a saved game if there is one
+        SaveStore.migrate()
         space = GameScreen(this, state)
-        setScreen(space)
+        if (startOnTitle) {
+            val title = TitleScreen(this, state)
+            transient = title
+            setScreen(title)
+        } else {
+            SaveStore.load(state, hardcore = false)
+            inGame = true
+            setScreen(space)
+        }
+    }
+
+    /** Save the game and go back to the title screen. */
+    fun exitToTitle() {
+        if (pendingSwitch != null) return
+        SaveStore.save(state)
+        inGame = false
+        pauseMenu.close()
+        requestSwitch { TitleScreen(this, state) }
+    }
+
+    /** Leave the title screen and play the game now held in [state]. */
+    fun startPlaying() {
+        inGame = true
+        returnToSpace()
     }
 
     /**
@@ -51,7 +83,7 @@ class SpaceGame(val devMode: Boolean = false) : Game() {
         } else {
             DungeonRun(
                 planet, state, kotlin.random.Random.nextLong(),
-                contract = state.bounties.active?.takeIf { it.planetId == planet.id },
+                contract = state.bounties.hunting?.takeIf { it.planetId == planet.id },
             ).also { state.dungeon = it }
         }
         DungeonScreen(this, state, run)
@@ -59,15 +91,26 @@ class SpaceGame(val devMode: Boolean = false) : Game() {
 
     fun enterInterior(spawnX: Float) = requestSwitch { InteriorScreen(this, state, spawnX) }
 
-    /** The player passed out or died: apply the penalty and wake them up in the ship's bunk. */
+    /**
+     * The player passed out or died. In Normal mode: apply the penalty and wake them in the ship's bunk.
+     * In Hardcore: this hunter is gone; the next one inherits their legacy, and the save is overwritten at once.
+     */
     fun collapse() {
         if (pendingSwitch != null) return
+        if (state.hardcore) {
+            val epitaph = state.hardcoreEpitaph(state.stats.collapseReason())
+            SaveStore.delete(hardcore = true) // one life: there is nothing to reload
+            inGame = false
+            state.dungeon = null
+            requestSwitch { TitleScreen(this, state, epitaph = epitaph) }
+            return
+        }
         state.pendingNotice = state.stats.applyCollapse()
         enterInterior(InteriorScreen.BUNK_SPAWN)
     }
 
     override fun dispose() {
-        SaveStore.save(state)
+        if (inGame) SaveStore.save(state)
         super.dispose()
         space.dispose()
         transient?.dispose()

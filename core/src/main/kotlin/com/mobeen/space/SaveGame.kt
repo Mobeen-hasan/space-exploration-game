@@ -33,6 +33,10 @@ object SaveCodec {
             "bountyDone" to s.bounties.completedCount.toString(),
             "bountyActive" to (s.bounties.active?.encode() ?: ""),
             "bountyBoard" to s.bounties.encodeBoard(),
+            "bountyCaptured" to s.bounties.captured.toString(),
+            "loadout" to s.loadout.encode(),
+            "hardcore" to s.hardcore.toString(),
+            "locker" to s.locker.joinToString(",") { it.name },
         )
     }
 
@@ -64,7 +68,16 @@ object SaveCodec {
             s.bounties.restore(
                 m["bountyDay"]?.toIntOrNull() ?: 0, m["bountyDone"]?.toIntOrNull() ?: 0,
                 m["bountyActive"] ?: "", m["bountyBoard"] ?: "",
+                m["bountyCaptured"] == "true",
             )
+            m["loadout"]?.let { s.loadout.restore(it) }
+            s.hardcore = m["hardcore"] == "true"
+            m["locker"]?.let { text ->
+                s.locker.clear()
+                text.split(",").filter { it.isNotBlank() }.forEach { name ->
+                    ItemType.entries.firstOrNull { it.name == name && it.consumable }?.let { s.locker.add(it) }
+                }
+            }
             val landed = m.getValue("landedOn")
             if (landed.isNotBlank()) {
                 val planet = planetFromId(landed.toLong())
@@ -81,20 +94,62 @@ object SaveCodec {
         PlanetGenerator.forChunk((id shr 32).toInt(), (id and 0xffffffffL).toInt())
 }
 
-/** Reads and writes the save through libGDX Preferences (a small file in the user's home folder). */
+/**
+ * Reads and writes saves through libGDX Preferences (small files in the user's home folder).
+ * Normal and Hardcore games have separate slots, so neither ever overwrites the other.
+ */
 object SaveStore {
-    private const val NAME = "space-exploration-save"
+    private const val NORMAL = "space-exploration-save"
+    private const val HARDCORE = "space-exploration-hardcore"
 
+    private fun prefs(hardcore: Boolean) = Gdx.app.getPreferences(if (hardcore) HARDCORE else NORMAL)
+
+    private fun read(hardcore: Boolean): Map<String, String> = prefs(hardcore).get().mapValues { it.value.toString() }
+
+    /** Saves into the slot for the game's own mode. */
     fun save(state: GameState) {
-        val prefs = Gdx.app.getPreferences(NAME)
-        prefs.clear()
-        prefs.put(SaveCodec.encode(state))
-        prefs.flush()
+        val p = prefs(state.hardcore)
+        p.clear()
+        p.put(SaveCodec.encode(state))
+        p.flush()
     }
 
-    fun load(state: GameState): Boolean {
-        val prefs = Gdx.app.getPreferences(NAME)
-        val all = prefs.get().mapValues { it.value.toString() }
-        return SaveCodec.decode(state, all)
+    fun hasSave(hardcore: Boolean): Boolean = prefs(hardcore).contains("v")
+
+    /** Loads the given mode's slot into [state]. Returns false (leaving [state] as it was) if there is no usable save. */
+    fun load(state: GameState, hardcore: Boolean): Boolean {
+        if (!hasSave(hardcore)) return false
+        if (!SaveCodec.decode(state, read(hardcore))) return false
+        state.hardcore = hardcore
+        return true
+    }
+
+    /** A one-line summary of a slot for the title screen, or null if it is empty. */
+    fun summary(hardcore: Boolean): String? {
+        if (!hasSave(hardcore)) return null
+        val peek = GameState()
+        if (!SaveCodec.decode(peek, read(hardcore))) return null
+        return "day ${peek.stats.day}, ${peek.stats.credits} credits"
+    }
+
+    fun delete(hardcore: Boolean) {
+        val p = prefs(hardcore)
+        p.clear()
+        p.flush()
+    }
+
+    /**
+     * Earlier builds kept Hardcore games in the Normal slot. Move such a game to its own slot, so that
+     * Normal and Hardcore stay separate from now on.
+     */
+    fun migrate() {
+        val normal = read(false)
+        if (normal["hardcore"] != "true") return
+        if (!hasSave(true)) {
+            val p = prefs(true)
+            p.put(normal)
+            p.flush()
+        }
+        delete(false)
     }
 }

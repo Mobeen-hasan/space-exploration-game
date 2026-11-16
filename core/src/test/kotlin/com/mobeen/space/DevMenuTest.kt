@@ -219,4 +219,13 @@ class DevMenuTest {
         assertEquals(Stats.MAX, h.state.stats.health)
         assertFalse(run.dead)
     }
+
+    @Test
+    fun aCheatAddsGearToTheBag() {
+        val h = GameHarness(devMode = true)
+        h.frame(3)
+        openMenu(h)
+        choose(h, "Add a fine or rare piece of gear")
+        assertEquals(1, h.state.loadout.bag.size)
+    }
 }

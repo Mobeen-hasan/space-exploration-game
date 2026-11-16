@@ -104,19 +104,27 @@ class BountyTest {
     }
 
     @Test
-    fun completingTheActiveContractCountsOnceAndIgnoresOthers() {
+    fun aCapturedTargetIsSubmittedOnceForTheReward() {
         val board = BountyBoard()
+        val stats = Stats()
         val a = contract(1L)
         board.available.add(a)
         board.accept(a)
-        board.completeActive(contract(99L))
-        assertEquals(0, board.completedCount)
-        assertNotNull(board.active)
-        board.completeActive(a)
+        assertEquals(0, board.submit(stats), "nothing to submit before a capture")
+
+        board.markCaptured(contract(99L))
+        assertFalse(board.captured, "capturing someone else's target does nothing")
+        assertEquals(a, board.hunting)
+
+        board.markCaptured(a)
+        assertTrue(board.captured)
+        assertNull(board.hunting, "nobody left to hunt")
+        val credits = stats.credits
+        assertEquals(a.reward, board.submit(stats))
+        assertEquals(credits + a.reward, stats.credits)
         assertEquals(1, board.completedCount)
         assertNull(board.active)
-        board.completeActive(a)
-        assertEquals(1, board.completedCount)
+        assertEquals(0, board.submit(stats), "a bounty pays once")
     }
 
     @Test
@@ -143,5 +151,18 @@ class BountyTest {
         assertTrue(SaveCodec.decode(b, old))
         assertNull(b.bounties.active)
         assertTrue(b.bounties.available.isEmpty())
+    }
+
+    @Test
+    fun aCaptureWaitingToBeSubmittedIsSaved() {
+        val a = GameState()
+        a.bounties.refreshIfNeeded(a)
+        val c = a.bounties.available.first()
+        a.bounties.accept(c)
+        a.bounties.markCaptured(c)
+        val b = GameState()
+        assertTrue(SaveCodec.decode(b, SaveCodec.encode(a)))
+        assertTrue(b.bounties.captured)
+        assertEquals(c.id, b.bounties.active?.id)
     }
 }

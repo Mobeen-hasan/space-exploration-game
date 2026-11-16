@@ -203,4 +203,13 @@ class StatsTest {
         s.sleep()
         assertEquals(Stats.MAX, s.mind)
     }
+
+    @Test
+    fun theDeadDoNotHeal() {
+        val s = Stats()
+        s.health = 0f
+        s.tickBody(1f)
+        assertEquals(0f, s.health, "regeneration must not lift you back above zero")
+        assertTrue(s.collapsed)
+    }
 }

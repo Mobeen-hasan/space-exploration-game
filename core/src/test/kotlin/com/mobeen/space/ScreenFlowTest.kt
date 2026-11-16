@@ -310,10 +310,97 @@ class ScreenFlowTest {
         h.state.stats.mind = 12f // panicking, hallucinating, screen shaking
         repeat(30) {
             h.state.stats.mind = 12f
+            h.state.stats.health = 100f // this test is about drawing the effects, not about surviving them
             h.press(Keys.SPACE)
             h.frame(2)
         }
         assertTrue(h.screen is DungeonScreen)
         h.frame(30)
+    }
+
+    // ------------------------------------------------------------------ loot screens
+
+    @Test
+    fun theGearScreenInTheRuinsEquipsFromTheBag() {
+        val h = GameHarness()
+        h.frame(2)
+        h.state.loadout.bag.add(Gear(GearKind.ARC_SABER, Quality.FINE))
+        h.game.enterDungeon(TestPlanets.ofType(PlanetType.ROCKY))
+        h.frame(3)
+        val run = h.state.dungeon!!
+        h.press(Keys.G)
+        h.frame(2)
+        val turn = run.turn
+        h.press(Keys.ENTER) // the first choosable row is "Equip Fine arc saber"
+        h.frame(2)
+        assertEquals(GearKind.ARC_SABER, h.state.loadout.weapon.kind)
+        assertEquals(turn + 1, run.turn)
+        h.press(Keys.ESCAPE)
+        h.frame(20)
+        assertTrue(h.screen is DungeonScreen)
+    }
+
+    @Test
+    fun buyingSuppliesAndEquippingGearAtTheTerminal() {
+        val h = atTerminal()
+        h.state.locker.clear()
+        val credits = h.state.stats.credits
+        repeat(4) { h.press(Keys.S) } // down to "Supply shop"
+        h.press(Keys.ENTER)
+        h.press(Keys.ENTER) // buy a medkit (first row)
+        h.frame(2)
+        assertEquals(listOf(ItemType.MEDKIT), h.state.locker)
+        assertEquals(credits - Shop.prices.getValue(ItemType.MEDKIT), h.state.stats.credits)
+        h.press(Keys.ESCAPE) // back to the main page
+
+        h.state.loadout.bag.add(Gear(GearKind.COMBAT_WEAVE))
+        repeat(5) { h.press(Keys.S) } // down to "Gear locker"
+        h.press(Keys.ENTER)
+        repeat(3) { h.press(Keys.S) } // past the three "now wearing" rows to the first spare
+        h.press(Keys.ENTER)
+        h.frame(2)
+        assertEquals(GearKind.COMBAT_WEAVE, h.state.loadout.armor.kind)
+        h.press(Keys.ESCAPE)
+        h.press(Keys.ESCAPE)
+        h.frame(20)
+    }
+
+    @Test
+    fun submittingACapturedBountyAtTheTerminal() {
+        val h = atTerminal()
+        val p = TestPlanets.ofType(PlanetType.ROCKY, id = 31L)
+        val c = Contract(9L, "Rook 'Lucky' Vale", "jailbreak", p.id, "Test", p.type, 2000, 350, 1)
+        h.state.bounties.available.add(c)
+        h.state.bounties.accept(c)
+        h.state.bounties.markCaptured(c)
+        val credits = h.state.stats.credits
+        repeat(3) { h.press(Keys.S) } // down to "Bounty board"
+        h.press(Keys.ENTER)
+        h.press(Keys.ENTER) // the first row is SUBMIT
+        h.frame(2)
+        assertEquals(credits + 350, h.state.stats.credits)
+        assertNull(h.state.bounties.active)
+        h.press(Keys.ESCAPE)
+        h.frame(20)
+    }
+
+    @Test
+    fun leavingTheRuinsWithACaptiveSaysToSubmitAndTheTargetIsGoneFromTheRuins() {
+        val h = GameHarness()
+        h.frame(2)
+        val p = TestPlanets.ofType(PlanetType.ROCKY, id = 32L)
+        val c = Contract(10L, "Orla 'Ghost' Pike", "smuggling", p.id, "Test", p.type, 2000, 350, 1)
+        h.state.bounties.available.add(c)
+        h.state.bounties.accept(c)
+        h.game.enterDungeon(p)
+        h.frame(3)
+        val run = h.state.dungeon!!
+        assertEquals(c, run.contract)
+        h.state.bounties.markCaptured(c) // as if the target had been brought out on an earlier trip
+        h.state.dungeon = null
+        h.game.enterDungeon(p)
+        h.frame(3)
+        assertNull(h.state.dungeon?.contract, "a captured target is not waiting in the ruins again")
+        h.frame(10)
     }
 }

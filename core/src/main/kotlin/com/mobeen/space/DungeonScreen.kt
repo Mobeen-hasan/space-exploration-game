@@ -73,6 +73,8 @@ class DungeonScreen(
     private var drawPy = run.py.toFloat()
     private var lastDepth = run.depth
     private val floats = ArrayList<ActiveFloat>()
+    private val gearMenu = OverlayMenu("GEAR")
+    private val gearCenter = Vector2()
     private val strikes = ArrayList<ActiveAttack>()
 
     private var toast: String? = null
@@ -113,10 +115,13 @@ class DungeonScreen(
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
 
-        if (game.devMenu.frame(game.devMode, w, h) { devOptions() }) { // paused while the developer menu is open
+        val paused = game.devMenu.frame(game.devMode, w, h) { devOptions() } ||
+            game.pauseMenu.frame(w, h, blocked = gearMenu.open || leaving, exitLabel = PauseMenu.ABANDON_TRIP) { abandonTrip() }
+        if (paused) { // the developer menu or the pause menu is open
             layout(w, h)
             animate(dt)
             draw(w, h)
+            game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
             game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
             return
         }
@@ -124,13 +129,20 @@ class DungeonScreen(
         if (!leaving) {
             if (run.exited) {
                 leaving = true
+                run.settleOnExit()
                 state.dungeon = null
-                if (run.completed) state.pendingNotice = "Bounty complete! You collected ${run.reward} credits."
+                run.contract?.takeIf { run.completed }?.let {
+                    state.pendingNotice = "You brought ${it.target} out. Submit the bounty at your ship terminal for ${it.reward} credits."
+                }
                 game.enterSurface(planet, Terrain.ENTRANCE_X - 25f)
             } else if (run.dead || state.stats.collapsed) {
                 leaving = true
+                run.settleOnDeath()
                 state.dungeon = null
                 game.collapse()
+                run.contract?.takeIf { run.completed && !state.hardcore }?.let { // the captive gets away while you are down
+                    state.pendingNotice = (state.pendingNotice ?: "") + " ${it.target} escaped while you were down."
+                }
             }
         }
 
@@ -138,7 +150,16 @@ class DungeonScreen(
         if (!leaving) handleInput(dt, w, h)
         animate(dt)
         draw(w, h)
+        game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
+    }
+
+    /** Quitting from the ruins ends the trip as if you fled: equipped gear stays, the pack and spare gear do not. */
+    private fun abandonTrip() {
+        leaving = true
+        run.settleOnDeath()
+        state.dungeon = null
+        game.exitToTitle()
     }
 
     private fun devOptions(): List<DevOption> {
@@ -172,6 +193,7 @@ class DungeonScreen(
         waitRadius = slot * 0.75f
         waitCenter.set(w - margin - waitRadius, margin + slot + gap * 2f + waitRadius)
         lightCenter.set(waitCenter.x - waitRadius * 2.4f, waitCenter.y)
+        gearCenter.set(lightCenter.x - waitRadius * 2.4f, waitCenter.y)
         stairsRadius = waitRadius * 1.15f
         stairsCenter.set(waitCenter.x, waitCenter.y + waitRadius + stairsRadius + gap * 2f)
     }
@@ -180,10 +202,36 @@ class DungeonScreen(
 
     private fun cancelTravel() = travel.clear()
 
+    private fun gearRows(): List<MenuRow> {
+        val rows = ArrayList<MenuRow>()
+        rows.add(MenuRow("Weapon: ${run.weapon.name}  (${run.weapon.describe()})", false))
+        val armorGear = state.loadout.armor
+        rows.add(MenuRow("Armor: ${armorGear.name}  (${armorGear.describe()})", false))
+        val sh = run.shield
+        rows.add(MenuRow("Shield: " + (sh?.let { "${it.name}  (${it.describe()})" } ?: "none"), false))
+        if (run.bag.isEmpty()) rows.add(MenuRow("Your bag is empty. Chests and the bounty target hold gear.", false))
+        for ((i, g) in run.bag.withIndex()) {
+            rows.add(MenuRow("Equip ${g.name}  (${g.describe()})") {
+                run.equipFromBag(i)
+            })
+        }
+        rows.add(MenuRow("Close") { gearMenu.open = false })
+        return rows
+    }
+
     private fun handleInput(dt: Float, w: Float, h: Float) {
         moveCooldown -= dt
         travelTimer -= dt
         val input = Gdx.input
+        if (input.isKeyJustPressed(Input.Keys.G)) {
+            gearMenu.open = !gearMenu.open
+            cancelTravel()
+            return
+        }
+        if (gearMenu.open) {
+            gearMenu.handle(w, h, gearRows())
+            return
+        }
 
         val itemKeys = intArrayOf(Input.Keys.NUM_1, Input.Keys.NUM_2, Input.Keys.NUM_3, Input.Keys.NUM_4, Input.Keys.NUM_5, Input.Keys.NUM_6)
         for (i in itemKeys.indices) {
@@ -255,6 +303,11 @@ class DungeonScreen(
         if (run.stairsHere() != null && hypot(sx - stairsCenter.x, ty - stairsCenter.y) <= stairsRadius) {
             cancelTravel()
             run.useStairs()
+            return
+        }
+        if (hypot(sx - gearCenter.x, ty - gearCenter.y) <= waitRadius) {
+            cancelTravel()
+            gearMenu.open = true
             return
         }
         if (hypot(sx - lightCenter.x, ty - lightCenter.y) <= waitRadius) {
@@ -389,6 +442,7 @@ class DungeonScreen(
         batch.begin()
         drawHudText(w, h)
         batch.end()
+        if (gearMenu.open) gearMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h, gearRows())
     }
 
     private fun drawTiles() {
@@ -493,6 +547,23 @@ class DungeonScreen(
             val cx = it.x * TILE + TILE / 2f
             val cy = it.y * TILE + TILE / 2f + sin(time * 3f + it.x) * 1.5f
             val c = itemColor(it.type)
+            if (it.type == ItemType.CHEST) { // a small box with a lid
+                shapes.setColor(c[0] * 0.6f, c[1] * 0.6f, c[2] * 0.6f, 1f)
+                shapes.rect(cx - 9f, cy - 7f, 18f, 12f)
+                shapes.setColor(c[0], c[1], c[2], 1f)
+                shapes.rect(cx - 10f, cy + 2f, 20f, 5f)
+                shapes.setColor(1f, 0.85f, 0.3f, 1f)
+                shapes.rect(cx - 1.5f, cy - 2f, 3f, 5f)
+                continue
+            }
+            if (it.type == ItemType.GEAR) { // a glinting diamond
+                shapes.setColor(c[0], c[1], c[2], 0.3f)
+                shapes.circle(cx, cy, 12f, 14)
+                shapes.setColor(c[0], c[1], c[2], 1f)
+                shapes.triangle(cx - 7f, cy, cx + 7f, cy, cx, cy + 9f)
+                shapes.triangle(cx - 7f, cy, cx + 7f, cy, cx, cy - 9f)
+                continue
+            }
             shapes.setColor(c[0], c[1], c[2], 0.25f)
             shapes.circle(cx, cy, 11f, 14)
             shapes.setColor(c[0], c[1], c[2], 1f)
@@ -511,6 +582,13 @@ class DungeonScreen(
         ItemType.ARMOR_PLATE -> floatArrayOf(0.65f, 0.72f, 0.9f)
         ItemType.OIL_FLASK -> floatArrayOf(0.95f, 0.72f, 0.3f)
         ItemType.TONIC -> floatArrayOf(0.72f, 0.5f, 1f)
+        ItemType.GEAR -> floatArrayOf(0.85f, 0.88f, 1f)
+        ItemType.CHEST -> floatArrayOf(0.65f, 0.45f, 0.22f)
+        ItemType.VIAL_RED -> floatArrayOf(0.95f, 0.2f, 0.25f)
+        ItemType.VIAL_GREEN -> floatArrayOf(0.3f, 0.9f, 0.35f)
+        ItemType.VIAL_BLUE -> floatArrayOf(0.3f, 0.5f, 1f)
+        ItemType.VIAL_AMBER -> floatArrayOf(1f, 0.7f, 0.2f)
+        ItemType.VIAL_BLACK -> floatArrayOf(0.35f, 0.25f, 0.4f)
     }
 
     private fun drawMonsters() {
@@ -686,6 +764,8 @@ class DungeonScreen(
         )
         shapes.setColor(1f, 0.75f, 0.3f, if (run.lanternLit) 0.28f else 0.08f)
         shapes.circle(lightCenter.x, lightCenter.y, waitRadius, 28)
+        shapes.setColor(0.85f, 0.88f, 1f, if (run.bag.isNotEmpty()) 0.3f else 0.12f)
+        shapes.circle(gearCenter.x, gearCenter.y, waitRadius, 28)
 
         // Item slots
         for (i in slotRects.indices) {
@@ -733,7 +813,9 @@ class DungeonScreen(
         StatsHud.drawLabels(batch, font, stats, barX, barY, barH, gap, showAir = false, showShip = false, showMind = true)
         font.setColor(1f, 0.9f, 0.5f, 1f)
         val stackTop = barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = false, showMind = true)
-        font.draw(batch, "CREDITS ${stats.credits}    BATON +${run.weaponBonus}   ARMOR ${run.armor}", barX, stackTop + barH * 0.4f)
+        val shieldText = run.shield?.let { "   SHIELD ${(it.meleeBlock * 100).toInt()}%" } ?: ""
+        val modText = if (run.weaponBonus > 0) " +${run.weaponBonus}" else ""
+        font.draw(batch, "CREDITS ${stats.credits}    ${run.weapon.name.uppercase()}$modText   ARMOR ${run.armor}$shieldText", barX, stackTop + barH * 0.4f)
         val lantern = when {
             run.lanternLit -> "LANTERN  oil ${run.oil.toInt()}"
             run.oil <= 0f -> "LANTERN  empty"
@@ -750,7 +832,7 @@ class DungeonScreen(
         font.draw(batch, "${planet.name} ruins  -  floor ${run.depth} of ${run.maxDepth}", margin, h - margin)
         font.setColor(0.75f, 0.9f, 1f, 0.9f)
         val goal = when {
-            run.completed -> "Bounty complete. Head back up to the surface."
+            run.completed -> "Target captured! Get them out alive: head back up to the surface."
             run.contract != null -> "Bounty: bring in ${run.contract.target} on floor ${run.maxDepth}."
             else -> "No bounty here. Explore and loot."
         }
@@ -760,12 +842,15 @@ class DungeonScreen(
         font.setColor(1f, 1f, 1f, 0.9f)
         for (i in slotRects.indices) {
             val r = slotRects[i]
-            val label = run.pack.getOrNull(i)?.label?.take(3) ?: ""
+            val label = run.pack.getOrNull(i)?.let { shortName(it) } ?: ""
             font.draw(batch, "${i + 1}", r[0] + 3f, r[1] + r[3] - 2f)
             if (label.isNotEmpty()) font.draw(batch, label, r[0] + 3f, r[1] + lh)
         }
         glyphs.setText(font, "WAIT")
         font.draw(batch, "WAIT", waitCenter.x - glyphs.width / 2f, waitCenter.y + glyphs.height / 2f)
+        font.setColor(0.9f, 0.92f, 1f, 1f)
+        glyphs.setText(font, "GEAR")
+        font.draw(batch, "GEAR", gearCenter.x - glyphs.width / 2f, gearCenter.y + glyphs.height / 2f)
         font.setColor(1f, 0.85f, 0.6f, 1f)
         glyphs.setText(font, "LIGHT")
         font.draw(batch, "LIGHT", lightCenter.x - glyphs.width / 2f, lightCenter.y + glyphs.height / 2f)
@@ -809,11 +894,14 @@ class DungeonScreen(
 
         if (time < 12f) {
             font.setColor(0.8f, 0.9f, 1f, min(1f, (12f - time) / 2f))
-            val hint = "WASD / arrows: move and attack    Space: wait    L: lantern    1-6: use item    E: stairs"
+            val hint = "WASD / arrows: move and attack    Space: wait    L: lantern    G: gear    1-6: use item    E: stairs"
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, h - margin - lh * 2f)
         }
     }
+
+    /** A three-letter tag for an item slot ("Red" for a red vial, "Med" for a medkit). */
+    private fun shortName(t: ItemType): String = t.label.take(3)
 
     private fun mindState(): String? {
         val mind = state.stats.mind

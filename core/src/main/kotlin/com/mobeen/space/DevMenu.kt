@@ -180,6 +180,13 @@ class DevMenu {
                 DevOption("God mode: ${if (s.invulnerable) "ON" else "OFF"}  (nothing hurts, nothing runs out)") { s.invulnerable = !s.invulnerable },
                 DevOption("Refill health, energy, food, air, mind, fuel and hull") { s.refillAll() },
                 DevOption("+1000 credits") { s.credits += 1000 },
+                DevOption("Die now (tests a collapse, or a Hardcore death)") {
+                    s.invulnerable = false
+                    s.health = 0f
+                },
+                DevOption("Add a fine or rare piece of gear to your bag") {
+                    if (state.loadout.bag.size < Loadout.BAG_SIZE) state.loadout.bag.add(Loot.rollTrophy(kotlin.random.Random.Default))
+                },
                 DevOption("Advance time by 1 minute (planet day and night)") { state.clock += 60f },
                 DevOption("Start a new day (fresh bounty contracts)") {
                     s.day += 1

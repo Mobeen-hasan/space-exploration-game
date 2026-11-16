@@ -215,6 +215,11 @@ object DungeonGenerator {
         if (depth == maxDepth) place(ItemType.MEDKIT) // and a second one before the last fight
         if (depth >= 2) place(ItemType.RATION)
         repeat(3 + rnd.nextInt(0, 3) + RuinsDifficulty.extraLoot(difficulty)) { place(pick(rnd, table)) }
+        // Chests: more likely on harder trips, and always one on the last floor.
+        val others = rooms.filter { it !== start }
+        if (depth == maxDepth || rnd.nextFloat() < 0.45f + 0.1f * difficulty.coerceIn(0, 3)) {
+            randomFloorIn(level, others, rnd)?.let { level.items.add(FloorItem(ItemType.CHEST, it.first, it.second)) }
+        }
         if (depth == maxDepth && boss == null) { // no target down here: a stash to make the trip worthwhile
             level.items.add(FloorItem(ItemType.CREDITS, end.cx, end.cy, rnd.nextInt(80, 151)))
             repeat(2) { place(pick(rnd, table)) }

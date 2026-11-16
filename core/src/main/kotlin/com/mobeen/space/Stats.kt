@@ -64,7 +64,7 @@ class Stats {
         food -= FOOD_DRAIN * dt
         if (food <= 0f) {
             health -= STARVE_DPS * dt
-        } else if (!regenBlocked && health < MAX && food > 50f && energy > 30f) {
+        } else if (health > 0f && !regenBlocked && health < MAX && food > 50f && energy > 30f) { // the dead do not heal
             health += REGEN * dt
         }
         regenBlocked = false // set again by tickSurface this frame if the player is still being hurt
@@ -155,6 +155,14 @@ class Stats {
         if (fuel >= EMERGENCY_THRESHOLD) return false
         fuel = EMERGENCY_FUEL
         return true
+    }
+
+    /** Back to a fresh start: full meters, starting credits, day 1. */
+    fun reset() {
+        refillAll()
+        credits = START_CREDITS
+        day = 1
+        invulnerable = false
     }
 
     /** Developer cheat: fill every meter. */
