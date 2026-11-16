@@ -74,6 +74,7 @@ class DungeonScreen(
     private var lastDepth = run.depth
     private val floats = ArrayList<ActiveFloat>()
     private val gearMenu = OverlayMenu("GEAR")
+    private val eventMenu = OverlayMenu("SOMETHING IN THE DARK")
     private val gearCenter = Vector2()
     private val strikes = ArrayList<ActiveAttack>()
 
@@ -116,7 +117,7 @@ class DungeonScreen(
         val h = Gdx.graphics.height.toFloat()
 
         val paused = game.devMenu.frame(game.devMode, w, h) { devOptions() } ||
-            game.pauseMenu.frame(w, h, blocked = gearMenu.open || leaving, exitLabel = PauseMenu.ABANDON_TRIP) { abandonTrip() }
+            game.pauseMenu.frame(w, h, blocked = gearMenu.open || leaving || run.pendingEvent != null, exitLabel = PauseMenu.ABANDON_TRIP) { abandonTrip() }
         if (paused) { // the developer menu or the pause menu is open
             layout(w, h)
             animate(dt)
@@ -202,6 +203,32 @@ class DungeonScreen(
 
     private fun cancelTravel() = travel.clear()
 
+    /** The event's description, wrapped, followed by its choices. */
+    private fun eventRows(): List<MenuRow> {
+        val e = run.pendingEvent ?: return emptyList()
+        val rows = ArrayList<MenuRow>()
+        for (line in wrap(e.text, 64)) rows.add(MenuRow(line, false))
+        for ((i, opt) in run.eventOptions().withIndex()) {
+            rows.add(MenuRow(opt.first + if (!opt.second) "   (you can't)" else "", opt.second) { run.chooseEvent(i) })
+        }
+        return rows
+    }
+
+    private fun wrap(text: String, width: Int): List<String> {
+        val lines = ArrayList<String>()
+        var line = StringBuilder()
+        for (word in text.split(" ")) {
+            if (line.isNotEmpty() && line.length + 1 + word.length > width) {
+                lines.add(line.toString())
+                line = StringBuilder()
+            }
+            if (line.isNotEmpty()) line.append(' ')
+            line.append(word)
+        }
+        if (line.isNotEmpty()) lines.add(line.toString())
+        return lines
+    }
+
     private fun gearRows(): List<MenuRow> {
         val rows = ArrayList<MenuRow>()
         rows.add(MenuRow("Weapon: ${run.weapon.name}  (${run.weapon.describe()})", false))
@@ -223,6 +250,13 @@ class DungeonScreen(
         moveCooldown -= dt
         travelTimer -= dt
         val input = Gdx.input
+        if (run.pendingEvent != null) { // something strange waits for your choice
+            cancelTravel()
+            eventMenu.open = true
+            eventMenu.handle(w, h, eventRows())
+            eventMenu.open = run.pendingEvent != null
+            return
+        }
         if (input.isKeyJustPressed(Input.Keys.G)) {
             gearMenu.open = !gearMenu.open
             cancelTravel()
@@ -413,6 +447,7 @@ class DungeonScreen(
         shapes.projectionMatrix = camera.combined
         shapes.begin(ShapeType.Filled)
         drawTiles()
+        drawTraps()
         drawItems()
         drawMonsters()
         drawPhantoms()
@@ -443,6 +478,10 @@ class DungeonScreen(
         drawHudText(w, h)
         batch.end()
         if (gearMenu.open) gearMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h, gearRows())
+        if (run.pendingEvent != null) {
+            eventMenu.open = true
+            eventMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h, eventRows())
+        }
     }
 
     private fun drawTiles() {
@@ -556,6 +595,16 @@ class DungeonScreen(
                 shapes.rect(cx - 1.5f, cy - 2f, 3f, 5f)
                 continue
             }
+            if (it.type == ItemType.EVENT) { // something strange: a slow violet pulse
+                val p = 0.5f + 0.5f * sin(time * 2f + it.x)
+                shapes.setColor(c[0], c[1], c[2], 0.15f + 0.2f * p)
+                shapes.circle(cx, cy, 13f, 18)
+                shapes.setColor(0.05f, 0.02f, 0.08f, 1f)
+                shapes.circle(cx, cy, 7f, 14)
+                shapes.setColor(c[0], c[1], c[2], 0.9f)
+                shapes.circle(cx, cy, 2.5f, 8)
+                continue
+            }
             if (it.type == ItemType.GEAR) { // a glinting diamond
                 shapes.setColor(c[0], c[1], c[2], 0.3f)
                 shapes.circle(cx, cy, 12f, 14)
@@ -589,6 +638,10 @@ class DungeonScreen(
         ItemType.VIAL_BLUE -> floatArrayOf(0.3f, 0.5f, 1f)
         ItemType.VIAL_AMBER -> floatArrayOf(1f, 0.7f, 0.2f)
         ItemType.VIAL_BLACK -> floatArrayOf(0.35f, 0.25f, 0.4f)
+        ItemType.BANDAGE -> floatArrayOf(0.95f, 0.95f, 0.88f)
+        ItemType.SPLINT -> floatArrayOf(0.8f, 0.68f, 0.45f)
+        ItemType.ANTISEPTIC -> floatArrayOf(0.4f, 0.9f, 0.85f)
+        ItemType.EVENT -> floatArrayOf(0.75f, 0.4f, 1f)
     }
 
     private fun drawMonsters() {
@@ -638,6 +691,41 @@ class DungeonScreen(
                 shapes.rect(cx - r, cy + r + 4f, bw, 3f)
                 shapes.setColor(0.9f, 0.25f, 0.25f, 1f)
                 shapes.rect(cx - r, cy + r + 4f, bw * m.hp.toFloat() / m.maxHp, 3f)
+            }
+        }
+    }
+
+    /** Traps you have spotted, marked so you can walk around them. */
+    private fun drawTraps() {
+        val lv = run.level
+        for (i in lv.knownTraps) {
+            if (!lv.explored[i]) continue
+            val type = lv.traps[i] ?: continue
+            val x = (i % lv.width) * TILE
+            val y = (i / lv.width) * TILE
+            val cx = x + TILE / 2f
+            val cy = y + TILE / 2f
+            when (type) {
+                TrapType.SPIKES -> {
+                    shapes.setColor(0.7f, 0.7f, 0.75f, 1f)
+                    for (k in -1..1) shapes.triangle(cx + k * 8f - 3f, cy - 5f, cx + k * 8f + 3f, cy - 5f, cx + k * 8f, cy + 6f)
+                }
+                TrapType.PIT -> {
+                    shapes.setColor(0.02f, 0.02f, 0.03f, 1f)
+                    shapes.rect(x + 5f, y + 5f, TILE - 10f, TILE - 10f)
+                    shapes.setColor(0.5f, 0.45f, 0.4f, 1f)
+                    shapes.rect(x + 5f, y + TILE - 7f, TILE - 10f, 2f)
+                }
+                TrapType.NOXIOUS -> {
+                    shapes.setColor(0.4f, 0.85f, 0.3f, 0.5f + 0.3f * sin(time * 3f))
+                    shapes.circle(cx, cy, 7f, 12)
+                }
+                TrapType.ALARM -> {
+                    shapes.setColor(0.9f, 0.2f, 0.2f, 1f)
+                    shapes.rectLine(x + 4f, cy, x + TILE - 4f, cy, 1.5f)
+                    shapes.circle(x + 5f, cy, 2.5f, 8)
+                    shapes.circle(x + TILE - 5f, cy, 2.5f, 8)
+                }
             }
         }
     }
@@ -827,6 +915,7 @@ class DungeonScreen(
             font.setColor(0.8f, 0.6f, 1f, 1f)
             font.draw(batch, it, barX, stackTop + barH * 2.6f)
         }
+        StatsHud.drawInjuries(batch, font, stats, barX, stackTop + barH * 3.7f)
 
         font.setColor(0.9f, 0.95f, 1f, 1f)
         font.draw(batch, "${planet.name} ruins  -  floor ${run.depth} of ${run.maxDepth}", margin, h - margin)

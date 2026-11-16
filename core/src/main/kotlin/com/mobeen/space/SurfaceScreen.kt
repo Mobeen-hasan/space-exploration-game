@@ -240,6 +240,7 @@ class SurfaceScreen(
             batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}",
             barX, barY + StatsHud.stackHeight(barH, gap, showAir = true, showShip = false) + barH * 0.4f,
         )
+        StatsHud.drawInjuries(batch, font, state.stats, barX, barY + StatsHud.stackHeight(barH, gap, showAir = true, showShip = false) + barH * 1.5f)
         drawWarnings(w, h)
         batch.end()
     }

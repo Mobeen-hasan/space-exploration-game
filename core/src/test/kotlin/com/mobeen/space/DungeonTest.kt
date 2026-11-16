@@ -531,6 +531,22 @@ class DungeonTest {
                 val i = run.pack.indexOf(ItemType.STIM)
                 if (i >= 0 && run.useItem(i)) continue
             }
+            if (run.pendingEvent != null) { // walk away from strange things
+                run.chooseEvent(run.eventOptions().lastIndex)
+                continue
+            }
+            if (stats.bleeding > 0f) {
+                val i = run.pack.indexOf(ItemType.BANDAGE)
+                if (i >= 0 && run.useItem(i)) continue
+            }
+            if (stats.brokenLeg || stats.brokenArm) {
+                val i = run.pack.indexOf(ItemType.SPLINT)
+                if (i >= 0 && run.useItem(i)) continue
+            }
+            if (stats.infected) {
+                val i = run.pack.indexOf(ItemType.ANTISEPTIC)
+                if (i >= 0 && run.useItem(i)) continue
+            }
             if (run.oil < 10f) {
                 val i = run.pack.indexOf(ItemType.OIL_FLASK)
                 if (i >= 0 && run.useItem(i)) continue
@@ -580,7 +596,7 @@ class DungeonTest {
             }
 
             fun stepToward(tx: Int, ty: Int): Boolean {
-                var route = Pathfinder.path(lv, run.px, run.py, tx, ty, true, false) { bx, by -> lv.monsterAt(bx, by) != null }
+                var route = Pathfinder.path(lv, run.px, run.py, tx, ty, true, false) { bx, by -> lv.monsterAt(bx, by) != null || lv.isKnownTrap(bx, by) }
                 if (route == null) route = Pathfinder.path(lv, run.px, run.py, tx, ty, false, false) { _, _ -> false }
                 val next = route?.firstOrNull() ?: return false
                 return run.tryMove(next[0] - run.px, next[1] - run.py)
@@ -591,7 +607,7 @@ class DungeonTest {
                 if (!stepToward(nearestMonster.x, nearestMonster.y)) run.waitTurn()
                 continue
             }
-            val nearestItem = lv.items.filter { lv.visible[lv.index(it.x, it.y)] }
+            val nearestItem = lv.items.filter { lv.visible[lv.index(it.x, it.y)] && it.type != ItemType.EVENT }
                 .minByOrNull { DungeonGenerator.distance(it.x, it.y, run.px, run.py) }
             if (nearestItem != null && run.pack.size < DungeonRun.PACK_SIZE) {
                 if (!stepToward(nearestItem.x, nearestItem.y)) run.waitTurn()
@@ -624,6 +640,7 @@ class DungeonTest {
             val run = DungeonRun(p, state, 500L + i, Random(i), contract = contract)
             if (playThrough(run, state)) wins++
         }
+
         return wins.toDouble() / total
     }
 
@@ -631,13 +648,14 @@ class DungeonTest {
     fun harderContractsAreHarderToFinish() {
         val rates = (0..3).map { winRate(it) }
         // Scavenging (0) ends differently from a contract (no target to beat), so it is only checked on its own.
-        // With the dread systems the ruins are meant to be harsh: even tier 1 is lost now and then.
-        assertTrue(rates[0] >= 0.65, "clearing the ruins with no contract should usually work: $rates")
-        assertTrue(rates[1] >= 0.6, "tier 1 should usually be survivable: $rates")
-        assertTrue(rates[1] > rates[2] + 0.05, "tier 2 should be harder than tier 1: $rates")
+        // With dread, injuries and traps the ruins are meant to be harsh: tier 1 is roughly a coin flip for a
+        // player who fights everything, and tier 3 is brutal. (The simulation is seeded, so these numbers repeat.)
+        assertTrue(rates[0] >= 0.55, "clearing the ruins with no contract should usually work: $rates")
+        assertTrue(rates[1] >= 0.42, "tier 1 should be survivable about half the time: $rates")
+        assertTrue(rates[1] > rates[2] + 0.1, "tier 2 should be harder than tier 1: $rates")
         assertTrue(rates[2] > rates[3] + 0.15, "tier 3 should be much harder than tier 2: $rates")
-        assertTrue(rates[2] >= 0.4, "tier 2 should be a fair challenge: $rates")
-        assertTrue(rates[3] >= 0.12, "even tier 3 must be beatable: $rates")
+        assertTrue(rates[2] >= 0.22, "tier 2 should be a fair challenge: $rates")
+        assertTrue(rates[3] >= 0.04, "even tier 3 must be beatable: $rates")
     }
 
     // ------------------------------------------------------------------ difficulty

@@ -50,6 +50,36 @@ class Stats {
     var credits = START_CREDITS
     var day = 1
 
+    // Injuries. They follow you out of the ruins until treated.
+    /** Seconds of bleeding left. It clots on its own in time, or a bandage or medkit stops it. */
+    var bleeding = 0f
+
+    /** Halves natural healing, and it wears on your mind. Only antiseptic cures it. */
+    var infected = false
+
+    /** Ruins your aim and the force of your blows. A splint, or a night's sleep, sets it. */
+    var brokenArm = false
+
+    /** Every step costs you extra time. A splint, or a night's sleep, sets it. */
+    var brokenLeg = false
+
+    val injured: Boolean get() = bleeding > 0f || infected || brokenArm || brokenLeg
+
+    /** Short labels for the HUD. */
+    fun injuryTags(): List<String> = buildList {
+        if (bleeding > 0f) add("BLEEDING")
+        if (infected) add("INFECTED")
+        if (brokenArm) add("BROKEN ARM")
+        if (brokenLeg) add("BROKEN LEG")
+    }
+
+    fun clearInjuries() {
+        bleeding = 0f
+        infected = false
+        brokenArm = false
+        brokenLeg = false
+    }
+
     /** Developer god mode: every meter is held full. Never saved. */
     var invulnerable = false
 
@@ -62,10 +92,15 @@ class Stats {
     fun tickBody(dt: Float) {
         energy -= ENERGY_DRAIN * dt
         food -= FOOD_DRAIN * dt
+        if (bleeding > 0f) {
+            health -= BLEED_DPS * dt
+            bleeding = max(0f, bleeding - dt)
+        }
+        if (infected) mind -= INFECTION_DREAD * dt
         if (food <= 0f) {
             health -= STARVE_DPS * dt
-        } else if (health > 0f && !regenBlocked && health < MAX && food > 50f && energy > 30f) { // the dead do not heal
-            health += REGEN * dt
+        } else if (health > 0f && !regenBlocked && bleeding <= 0f && health < MAX && food > 50f && energy > 30f) { // the dead do not heal
+            health += REGEN * dt * (if (infected) 0.5f else 1f) // an infection slows healing
         }
         regenBlocked = false // set again by tickSurface this frame if the player is still being hurt
         clamp()
@@ -113,6 +148,7 @@ class Stats {
         energy = max(energy, 40f)
         food = max(food, 30f)
         air = MAX
+        bleeding = 0f // someone patched you up
         return "$reason You woke up in the ship and lost $lost credits."
     }
 
@@ -120,7 +156,11 @@ class Stats {
         air = MAX
     }
 
+    /** A night in the bunk: rested, calm, bones set and bleeding stopped. An infection still needs antiseptic. */
     fun sleep() {
+        bleeding = 0f
+        brokenArm = false
+        brokenLeg = false
         mind = MAX
         energy = MAX
         food = max(0f, food - 15f)
@@ -168,6 +208,7 @@ class Stats {
     /** Developer cheat: fill every meter. */
     fun refillAll() {
         health = MAX; energy = MAX; food = MAX; air = MAX; mind = MAX; fuel = MAX; hull = MAX
+        clearInjuries()
     }
 
     fun clamp() {
@@ -201,5 +242,9 @@ class Stats {
         const val EMERGENCY_FUEL = 10f
 
         const val FUEL_BURN = 0.35f // per second at full thrust
+
+        const val BLEED_DPS = 0.3f // about one health every three turns in the ruins
+        const val BLEED_TIME = 15f // seconds (about 12 turns) until a wound clots by itself
+        const val INFECTION_DREAD = 0.05f
     }
 }

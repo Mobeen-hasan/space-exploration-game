@@ -54,6 +54,14 @@ object StatsHud {
         shapes.set(ShapeType.Filled)
     }
 
+    /** Draws any injuries as red tags, e.g. "BLEEDING   BROKEN LEG". Call inside batch.begin(). */
+    fun drawInjuries(batch: SpriteBatch, font: BitmapFont, s: Stats, x: Float, y: Float) {
+        val tags = s.injuryTags()
+        if (tags.isEmpty()) return
+        font.setColor(1f, 0.35f, 0.3f, 1f)
+        font.draw(batch, tags.joinToString("   "), x, y)
+    }
+
     /** Call inside batch.begin(), HUD projection, with the same geometry as [drawShapes]. */
     fun drawLabels(
         batch: SpriteBatch, font: BitmapFont, s: Stats, x: Float, y: Float, barH: Float, gap: Float,

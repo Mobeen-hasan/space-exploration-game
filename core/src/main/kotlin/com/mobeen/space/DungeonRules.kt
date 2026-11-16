@@ -180,6 +180,12 @@ class DungeonRun(
 
     private var calmTurns = 0
 
+    /** A strange thing you are standing over, waiting for you to choose what to do. Nothing else happens until you do. */
+    var pendingEvent: GrimEvent? = null
+        private set
+    private var pendingEventItem: FloorItem? = null
+    private var limpSteps = 0
+
     /** Hardcore only: whether this trip's one reprieve from a killing blow has been used. */
     var lastStandUsed = false
         private set
@@ -219,7 +225,7 @@ class DungeonRun(
 
     /** Move, or attack if a monster is in the way. Returns true if a turn was used. */
     fun tryMove(dx: Int, dy: Int): Boolean {
-        if (dead || exited) return false
+        if (dead || exited || pendingEvent != null) return false
         val lv = level
         if (!Pathfinder.canStep(lv, px, py, dx, dy)) return false
         facingX = dx
@@ -243,8 +249,13 @@ class DungeonRun(
             Tile.ACID -> hurtPlayer(hazardDamage(Tile.ACID), "Acid burns you")
             else -> {}
         }
+        lv.trapAt(nx, ny)?.let { springTrap(lv, nx, ny, it) }
         pickup(lv)
         endTurn()
+        if (state.stats.brokenLeg && !dead && limpSteps++ % 2 == 0) { // a broken leg: every other step costs an extra turn
+            if (limpSteps % 8 == 1) log("Your broken leg screams with every step.")
+            endTurn()
+        }
         return true
     }
 
@@ -282,15 +293,16 @@ class DungeonRun(
     }
 
     fun waitTurn() {
-        if (dead || exited) return
+        if (dead || exited || pendingEvent != null) return
         endTurn()
     }
 
     fun useItem(index: Int): Boolean {
-        if (dead || exited || index !in pack.indices) return false
+        if (dead || exited || pendingEvent != null || index !in pack.indices) return false
         val stats = state.stats
         when (pack[index]) {
             ItemType.MEDKIT -> {
+                stats.bleeding = 0f
                 stats.health = minOf(Stats.MAX, stats.health + MEDKIT_HEAL)
                 floatTexts.add(FloatText(px, py, "+${MEDKIT_HEAL.toInt()}", FloatText.HEAL))
                 log("You use a medkit. (+${MEDKIT_HEAL.toInt()} health)")
@@ -311,6 +323,33 @@ class DungeonRun(
                 stats.mind = minOf(Stats.MAX, stats.mind + TONIC_CALM)
                 floatTexts.add(FloatText(px, py, "+${TONIC_CALM.toInt()}", FloatText.HEAL))
                 log("You drink a calming tonic. Your hands stop shaking.")
+            }
+            ItemType.BANDAGE -> {
+                if (stats.bleeding <= 0f) {
+                    log("You are not bleeding.")
+                    return false
+                }
+                stats.bleeding = 0f
+                stats.health = minOf(Stats.MAX, stats.health + 5f)
+                log("You bind the wound. The bleeding stops.")
+            }
+            ItemType.SPLINT -> {
+                when {
+                    stats.brokenLeg -> { stats.brokenLeg = false; log("You splint your leg. You can walk properly again.") }
+                    stats.brokenArm -> { stats.brokenArm = false; log("You splint your arm. Your grip steadies.") }
+                    else -> {
+                        log("Nothing is broken.")
+                        return false
+                    }
+                }
+            }
+            ItemType.ANTISEPTIC -> {
+                if (!stats.infected) {
+                    log("You have no infection to treat.")
+                    return false
+                }
+                stats.infected = false
+                log("The antiseptic burns, and the fever breaks.")
             }
             ItemType.VIAL_RED, ItemType.VIAL_GREEN, ItemType.VIAL_BLUE, ItemType.VIAL_AMBER, ItemType.VIAL_BLACK -> {
                 val type = pack[index]
@@ -361,7 +400,9 @@ class DungeonRun(
     /** The route the player would walk to reach a known tile, or null. Monsters block the way. */
     fun pathTo(x: Int, y: Int): List<IntArray>? {
         val lv = level
-        return Pathfinder.path(lv, px, py, x, y, avoidHarm = true, exploredOnly = true) { bx, by -> lv.monsterAt(bx, by) != null }
+        return Pathfinder.path(lv, px, py, x, y, avoidHarm = true, exploredOnly = true) { bx, by ->
+            lv.monsterAt(bx, by) != null || lv.isKnownTrap(bx, by)
+        }
     }
 
     fun visibleMonsters(): List<Monster> = level.monsters.filter { level.visible[level.index(it.x, it.y)] }
@@ -371,6 +412,7 @@ class DungeonRun(
     /** Show the whole floor. */
     fun devRevealFloor() {
         java.util.Arrays.fill(level.explored, true)
+        level.knownTraps.addAll(level.traps.keys)
         updateSight()
     }
 
@@ -439,14 +481,16 @@ class DungeonRun(
     private fun attack(m: Monster) {
         val ambush = m.state == AiState.SLEEPING // a sleeping target cannot dodge
         val aim = weapon.accuracy
-        val accuracy = if (state.stats.mind < PANIC_MIND) aim - PANIC_ACCURACY_LOSS else aim
+        var accuracy = if (state.stats.mind < PANIC_MIND) aim - PANIC_ACCURACY_LOSS else aim
+        if (state.stats.brokenArm) accuracy -= BROKEN_ARM_AIM_LOSS
         if (!ambush && rnd.nextFloat() > accuracy) {
             log("You miss the ${m.displayName}.")
             floatTexts.add(FloatText(m.x, m.y, "miss", FloatText.INFO))
             wake(m)
             return
         }
-        val dmg = (rnd.nextInt(weapon.dmgMin, weapon.dmgMax + 1) + weaponBonus) * (if (ambush) weapon.ambush else 1)
+        val rawDmg = (rnd.nextInt(weapon.dmgMin, weapon.dmgMax + 1) + weaponBonus) * (if (ambush) weapon.ambush else 1)
+        val dmg = if (state.stats.brokenArm) max(1, (rawDmg * BROKEN_ARM_DAMAGE).toInt()) else rawDmg
         m.hp -= dmg
         m.flash = 0.2f
         floatTexts.add(FloatText(m.x, m.y, "-$dmg", FloatText.HIT_MONSTER))
@@ -488,7 +532,8 @@ class DungeonRun(
         val roll = rnd.nextInt(100)
         return when {
             roll < 40 -> ItemType.vials[rnd.nextInt(ItemType.vials.size)]
-            roll < 60 -> ItemType.MEDKIT
+            roll < 52 -> ItemType.MEDKIT
+            roll < 60 -> ItemType.BANDAGE
             roll < 75 -> ItemType.OIL_FLASK
             roll < 90 -> ItemType.TONIC
             else -> ItemType.STIM
@@ -605,6 +650,10 @@ class DungeonRun(
                 }
             }
             ItemType.CHEST -> openChest(lv, item)
+            ItemType.EVENT -> {
+                pendingEvent = GrimEvent.entries.getOrNull(item.amount)
+                pendingEventItem = item
+            }
             else -> {
                 if (pack.size < PACK_SIZE) {
                     pack.add(item.type)
@@ -640,6 +689,7 @@ class DungeonRun(
 
     private fun updateSight() {
         Fov.compute(level, px, py, sightRadius)
+        spotTraps()
         for (m in level.monsters) {
             if (m.spotted || !level.visible[level.index(m.x, m.y)]) continue
             m.spotted = true
@@ -847,6 +897,235 @@ class DungeonRun(
         val dmg = max(1, (base * m.dmgScale).toInt() - armor)
         val verb = if (ranged) "spits acid at you" else "hits you"
         hurtPlayer(dmg, "$who $verb")
+        if (!dead) rollInjury(m)
+    }
+
+    /** A blow that lands may leave a lasting injury. Good armor makes that less likely. */
+    private fun rollInjury(m: Monster) {
+        if (state.stats.invulnerable) return
+        val guard = 0.7f * (1f - armor * 0.12f).coerceIn(0.35f, 1f)
+        fun roll(chance: Float) = rnd.nextFloat() < chance * guard
+        when (m.type) {
+            MonsterType.SCUTTLER -> if (roll(0.07f)) startBleeding("Its claws open a gash")
+            MonsterType.HUSK -> {
+                if (roll(0.09f)) startBleeding("It tears your skin")
+                if (roll(0.05f)) infect("Its rotten teeth broke the skin")
+            }
+            MonsterType.SPITTER -> if (roll(0.07f)) infect("The acid eats into an old cut")
+            MonsterType.BRUTE -> {
+                if (roll(0.07f)) breakArm("Something in your arm snaps")
+                else if (roll(0.05f)) breakLeg("Your leg buckles with a crack")
+                if (roll(0.07f)) startBleeding("The blow splits your skin")
+            }
+            MonsterType.FUGITIVE -> if (roll(0.12f)) startBleeding("A hidden blade finds you")
+        }
+    }
+
+    private fun startBleeding(why: String) {
+        val stats = state.stats
+        if (stats.invulnerable) return
+        if (stats.bleeding <= 0f) log("$why. You are bleeding!")
+        stats.bleeding = max(stats.bleeding, Stats.BLEED_TIME)
+        floatTexts.add(FloatText(px, py, "bleeding", FloatText.HIT_PLAYER))
+    }
+
+    private fun infect(why: String) {
+        val stats = state.stats
+        if (stats.invulnerable || stats.infected) return
+        stats.infected = true
+        log("$why. The wound is infected.")
+        floatTexts.add(FloatText(px, py, "infected", FloatText.HIT_PLAYER))
+    }
+
+    private fun breakArm(why: String) {
+        val stats = state.stats
+        if (stats.invulnerable || stats.brokenArm) return
+        stats.brokenArm = true
+        log("$why. Your arm is broken!")
+        floatTexts.add(FloatText(px, py, "broken arm", FloatText.HIT_PLAYER))
+    }
+
+    private fun breakLeg(why: String) {
+        val stats = state.stats
+        if (stats.invulnerable || stats.brokenLeg) return
+        stats.brokenLeg = true
+        log("$why. Your leg is broken!")
+        floatTexts.add(FloatText(px, py, "broken leg", FloatText.HIT_PLAYER))
+    }
+
+    // ------------------------------------------------------------------ traps
+
+    /** Look around for traps: a fair chance to notice one within two tiles that you can see. */
+    private fun spotTraps() {
+        val lv = level
+        val chance = if (state.stats.mind < PANIC_MIND) 0.1f else TRAP_SPOT_CHANCE
+        for ((i, type) in lv.traps) {
+            if (i in lv.knownTraps || !lv.visible[i]) continue
+            val tx = i % lv.width
+            val ty = i / lv.width
+            if (DungeonGenerator.distance(tx, ty, px, py) > 2) continue
+            if (rnd.nextFloat() < chance) {
+                lv.knownTraps.add(i)
+                log("You spot ${type.label} in the floor.")
+            }
+        }
+    }
+
+    private fun springTrap(lv: Level, x: Int, y: Int, type: TrapType) {
+        val i = lv.index(x, y)
+        lv.traps.remove(i)
+        lv.knownTraps.remove(i)
+        when (type) {
+            TrapType.SPIKES -> {
+                hurtPlayer(7, "Spikes punch up through the floor and into your foot")
+                if (!dead) startBleeding("The spikes went deep")
+            }
+            TrapType.PIT -> {
+                hurtPlayer(8, "The floor gives way and you drop into a pit")
+                if (!dead && rnd.nextFloat() < 0.25f) breakLeg("You land badly")
+            }
+            TrapType.NOXIOUS -> {
+                if (!state.stats.invulnerable) state.stats.mind = max(0f, state.stats.mind - 15f)
+                log("A vent hisses. Choking green gas fills your lungs and your head swims.")
+                if (rnd.nextFloat() < 0.35f) infect("The gas burns in your chest")
+            }
+            TrapType.ALARM -> {
+                log("A wire snaps taut. A shrill alarm wails through the ruins!")
+                for (m in lv.monsters) {
+                    if (DungeonGenerator.distance(m.x, m.y, px, py) <= ALARM_RANGE) {
+                        m.state = AiState.HUNTING
+                        m.lastSeenX = px
+                        m.lastSeenY = py
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ grim events
+
+    /** The choices for the event you are standing over, and whether each can be chosen right now. */
+    fun eventOptions(): List<Pair<String, Boolean>> {
+        val e = pendingEvent ?: return emptyList()
+        return e.options.mapIndexed { i, text ->
+            val ok = when {
+                e == GrimEvent.SCAVENGER && i == 0 -> ItemType.MEDKIT in pack
+                e == GrimEvent.LOCKER && i == 0 -> state.stats.credits >= 20
+                else -> true
+            }
+            text to ok
+        }
+    }
+
+    /** Decide what to do about the event. The last option always walks away and leaves it for later. */
+    fun chooseEvent(index: Int): Boolean {
+        val e = pendingEvent ?: return false
+        val options = eventOptions()
+        if (index !in options.indices || !options[index].second) return false
+        val leave = index == e.options.lastIndex
+        val item = pendingEventItem
+        pendingEvent = null
+        pendingEventItem = null
+        if (leave) {
+            log("You leave it alone.")
+            return true
+        }
+        item?.let { level.items.remove(it) }
+        resolveEvent(e, index)
+        endTurn()
+        return true
+    }
+
+    private fun resolveEvent(e: GrimEvent, choice: Int) {
+        val stats = state.stats
+        when (e) {
+            GrimEvent.CORPSE -> {
+                if (rnd.nextFloat() < 0.6f) giveFind("Pried from its fingers")
+                else {
+                    log("Its fluids seep into a cut on your hand.")
+                    infect("The body was rotten")
+                    if (rnd.nextFloat() < 0.5f) giveFind("Still, it was holding")
+                }
+            }
+            GrimEvent.SHRINE -> if (choice == 0) {
+                if (rnd.nextFloat() < 0.5f) {
+                    stats.mind = minOf(Stats.MAX, stats.mind + 30f)
+                    log("A strange calm settles over you. (+30 mind)")
+                } else {
+                    if (!stats.invulnerable) stats.mind = max(0f, stats.mind - 20f)
+                    log("Something answers. You wish it had not. (-20 mind)")
+                }
+            } else {
+                oil = minOf(OIL_MAX, oil + 35f)
+                if (!stats.invulnerable) stats.mind = max(0f, stats.mind - 5f)
+                log("You tip the candle's oil into your lantern. The shrine feels emptier. (+35 oil)")
+            }
+            GrimEvent.SCAVENGER -> if (choice == 0) {
+                pack.remove(ItemType.MEDKIT)
+                stats.mind = minOf(Stats.MAX, stats.mind + 20f)
+                java.util.Arrays.fill(level.explored, true)
+                stats.credits += 25
+                log("\"Thank you.\" They sketch the whole floor for you and press a few credits into your hand. (+20 mind, +25 credits)")
+            } else {
+                stats.credits += 40
+                if (!stats.invulnerable) stats.mind = max(0f, stats.mind - 15f)
+                log("You take what they have. (+40 credits, -15 mind)")
+                if (rnd.nextFloat() < 0.3f) startBleeding("They lash out with a knife as you leave")
+            }
+            GrimEvent.LOCKER -> if (choice == 0) {
+                stats.credits -= 20
+                if (rnd.nextFloat() < 0.5f) giveGear("The locker clanks open") else log("It swallows your credits and stays shut.")
+            } else {
+                if (rnd.nextFloat() < 0.5f) giveGear("The lock gives way") else {
+                    log("The lock shrieks as it breaks. Things in the dark heard that.")
+                    for (m in level.monsters) {
+                        if (DungeonGenerator.distance(m.x, m.y, px, py) <= ALARM_RANGE) {
+                            m.state = AiState.HUNTING
+                            m.lastSeenX = px
+                            m.lastSeenY = py
+                        }
+                    }
+                }
+            }
+            GrimEvent.BLACK_POOL -> if (rnd.nextFloat() < 0.5f) {
+                if (rnd.nextFloat() < 0.3f) giveGear("Your fingers close around something") else {
+                    val found = rnd.nextInt(60, 121)
+                    stats.credits += found
+                    log("You fish out a handful of old credit chips. (+$found credits)")
+                }
+            } else {
+                log("Something beneath the surface bites down.")
+                hurtPlayer(6, "")
+                if (!dead) startBleeding("Teeth, in the black water")
+                if (!stats.invulnerable) stats.mind = max(0f, stats.mind - 10f)
+            }
+        }
+    }
+
+    private fun giveFind(lead: String) {
+        if (rnd.nextFloat() < 0.2f) {
+            giveGear(lead)
+            return
+        }
+        val t = randomConsumable()
+        if (pack.size < PACK_SIZE) {
+            pack.add(t)
+            log("$lead: a ${itemName(t).lowercase()}.")
+        } else {
+            level.items.add(FloorItem(t, px, py))
+            log("$lead: a ${itemName(t).lowercase()}, but your pack is full.")
+        }
+    }
+
+    private fun giveGear(lead: String) {
+        val g = Loot.rollGear(depth, contract?.tier ?: 0, rnd)
+        if (bag.size < Loadout.BAG_SIZE) {
+            state.loadout.bag.add(g)
+            log("$lead: a ${g.name.lowercase()} (${g.describe()}).")
+        } else {
+            level.items.add(FloorItem(ItemType.GEAR, px, py, gear = g))
+            log("$lead: a ${g.name.lowercase()}, but your bag is full.")
+        }
     }
 
     private fun log(text: String) {
@@ -865,6 +1144,10 @@ class DungeonRun(
         const val STARTING_STIMS = 1
         const val STARTING_ARMOR = 1 // the ship-issue vest
         const val DROP_CHANCE = 0.12f
+        const val BROKEN_ARM_AIM_LOSS = 0.15f
+        const val BROKEN_ARM_DAMAGE = 0.75f
+        const val TRAP_SPOT_CHANCE = 0.3f
+        const val ALARM_RANGE = 12
         const val CHEST_GEAR_CHANCE = 0.55f
         const val MEDKIT_HEAL = 50f
         const val TURNS_PER_REGEN = 4

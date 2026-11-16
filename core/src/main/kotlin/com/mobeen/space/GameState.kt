@@ -29,6 +29,32 @@ class GameState {
     /** One life: if you die, the game is over and its save is deleted. Normal games are kept separately. */
     var hardcore = false
 
+    /**
+     * Treat what you can with supplies from the ship's locker: a bandage (or a medkit) for bleeding, antiseptic for
+     * an infection, splints for broken bones. Returns what was done, or an empty list if nothing could be treated.
+     */
+    fun treatFromLocker(): List<String> {
+        val done = ArrayList<String>()
+        fun take(t: ItemType): Boolean = locker.remove(t)
+        if (stats.bleeding > 0f && (take(ItemType.BANDAGE) || take(ItemType.MEDKIT))) {
+            stats.bleeding = 0f
+            done.add("bandaged your wound")
+        }
+        if (stats.infected && take(ItemType.ANTISEPTIC)) {
+            stats.infected = false
+            done.add("cleaned the infection")
+        }
+        if (stats.brokenLeg && take(ItemType.SPLINT)) {
+            stats.brokenLeg = false
+            done.add("splinted your leg")
+        }
+        if (stats.brokenArm && take(ItemType.SPLINT)) {
+            stats.brokenArm = false
+            done.add("splinted your arm")
+        }
+        return done
+    }
+
     /** Start over completely, in the chosen mode. */
     fun resetForNewGame(hardcoreMode: Boolean) {
         freshHunter()
@@ -62,6 +88,7 @@ class GameState {
     companion object {
         const val LOCKER_SIZE = 6
         val STARTING_KIT: List<ItemType> =
-            List(DungeonRun.STARTING_MEDKITS) { ItemType.MEDKIT } + List(DungeonRun.STARTING_STIMS) { ItemType.STIM }
+            List(DungeonRun.STARTING_MEDKITS) { ItemType.MEDKIT } + List(DungeonRun.STARTING_STIMS) { ItemType.STIM } +
+                ItemType.BANDAGE
     }
 }

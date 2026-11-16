@@ -243,6 +243,10 @@ class InteriorScreen(
                 menuPage = MenuPage.BOUNTIES
                 menuSel = 0
             },
+            Option("Treat injuries   (with supplies from your locker)", state.stats.injured, "Bandages or medkits for bleeding, antiseptic for infection, splints for broken bones.\nSleeping in the bunk also sets bones and stops bleeding.") {
+                val done = state.treatFromLocker()
+                showToast(if (done.isEmpty()) "Your locker has nothing that helps. Buy supplies at the shop." else "You " + done.joinToString(", ") + ".", 4f)
+            },
             Option("Supply shop   (locker ${state.locker.size}/${GameState.LOCKER_SIZE})", true) {
                 menuPage = MenuPage.SHOP
                 menuSel = 0
@@ -461,10 +465,9 @@ class InteriorScreen(
         StatsHud.drawLabels(batch, font, state.stats, barX, barY, barH, gap, showAir = false, showShip = true, showMind = true)
         TouchHud.drawLabels(batch, font, glyphs, controls)
         font.setColor(1f, 0.9f, 0.5f, 1f)
-        font.draw(
-            batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}",
-            barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true, showMind = true) + barH * 0.4f,
-        )
+        val stackTop = barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true, showMind = true)
+        font.draw(batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}", barX, stackTop + barH * 0.4f)
+        StatsHud.drawInjuries(batch, font, state.stats, barX, stackTop + barH * 1.5f)
         font.setColor(0.8f, 0.9f, 1f, 0.9f)
         font.draw(batch, "THE SHIP" + if (state.hardcore) "   (Hardcore: one life)" else "", margin, h - margin)
         font.draw(batch, "A / D: walk    E: use    Touch: left stick walks, green button uses", margin, h - margin - lh)

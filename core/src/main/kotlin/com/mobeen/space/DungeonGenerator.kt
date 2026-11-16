@@ -75,6 +75,8 @@ object DungeonGenerator {
         addBraziers(level, depth, rooms, start, rnd)
         addMonsters(level, planet, depth, maxDepth, rooms, start, end, rnd, boss, difficulty)
         addItems(level, depth, maxDepth, rooms, start, end, rnd, boss, difficulty)
+        addEvents(level, rooms, start, rnd)
+        addTraps(level, depth, difficulty, start, rnd)
         return level
     }
 
@@ -202,9 +204,10 @@ object DungeonGenerator {
 
     private fun addItems(level: Level, depth: Int, maxDepth: Int, rooms: List<Room>, start: Room, end: Room, rnd: Random, boss: Contract?, difficulty: Int) {
         val table = listOf(
-            ItemType.MEDKIT to 45, ItemType.RATION to 18, ItemType.STIM to 22,
+            ItemType.MEDKIT to 58, ItemType.RATION to 18, ItemType.STIM to 22,
             ItemType.CREDITS to 25, ItemType.BATON_MOD to 5, ItemType.ARMOR_PLATE to 5,
             ItemType.OIL_FLASK to 18, ItemType.TONIC to 18,
+            ItemType.BANDAGE to 18, ItemType.SPLINT to 6, ItemType.ANTISEPTIC to 6,
         )
         fun place(type: ItemType) {
             val spot = randomFloorIn(level, rooms, rnd) ?: return
@@ -223,6 +226,35 @@ object DungeonGenerator {
         if (depth == maxDepth && boss == null) { // no target down here: a stash to make the trip worthwhile
             level.items.add(FloorItem(ItemType.CREDITS, end.cx, end.cy, rnd.nextInt(80, 151)))
             repeat(2) { place(pick(rnd, table)) }
+        }
+    }
+
+    /** Something strange on most floors: a corpse, a shrine, a scavenger, a locker or a black pool. */
+    private fun addEvents(level: Level, rooms: List<Room>, start: Room, rnd: Random) {
+        val others = rooms.filter { it !== start }
+        var count = if (rnd.nextFloat() < 0.6f) 1 else 0
+        if (rnd.nextFloat() < 0.25f) count++
+        repeat(count) {
+            val spot = randomFloorIn(level, others, rnd) ?: return@repeat
+            val kind = GrimEvent.entries[rnd.nextInt(GrimEvent.entries.size)]
+            level.items.add(FloorItem(ItemType.EVENT, spot.first, spot.second, kind.ordinal))
+        }
+    }
+
+    /** Hidden traps on plain floor, never in the arrival room or beside the stairs. More on harder trips. */
+    private fun addTraps(level: Level, depth: Int, difficulty: Int, start: Room, rnd: Random) {
+        val count = (depth + 1) / 2 + difficulty.coerceIn(0, 3) / 2
+        val table = listOf(TrapType.SPIKES to 35, TrapType.PIT to 25, TrapType.NOXIOUS to 20, TrapType.ALARM to 20)
+        var placed = 0
+        var attempts = 0
+        while (placed < count && attempts++ < 300) {
+            val x = rnd.nextInt(1, W - 1)
+            val y = rnd.nextInt(1, H - 1)
+            if (!isFree(level, x, y) || level.trapAt(x, y) != null) continue
+            if (x in start.x until start.x + start.w && y in start.y until start.y + start.h) continue
+            if (distance(x, y, level.upX, level.upY) <= 1 || (level.hasDown && distance(x, y, level.downX, level.downY) <= 1)) continue
+            level.traps[level.index(x, y)] = pick(rnd, table)
+            placed++
         }
     }
 

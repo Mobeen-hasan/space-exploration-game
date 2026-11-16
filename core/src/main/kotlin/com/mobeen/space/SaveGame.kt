@@ -16,6 +16,10 @@ object SaveCodec {
             "food" to st.food.toString(),
             "air" to st.air.toString(),
             "mind" to st.mind.toString(),
+            "bleeding" to st.bleeding.toString(),
+            "infected" to st.infected.toString(),
+            "brokenArm" to st.brokenArm.toString(),
+            "brokenLeg" to st.brokenLeg.toString(),
             "fuel" to st.fuel.toString(),
             "hull" to st.hull.toString(),
             "credits" to st.credits.toString(),
@@ -50,6 +54,10 @@ object SaveCodec {
             st.food = m.getValue("food").toFloat()
             st.air = m.getValue("air").toFloat()
             st.mind = m["mind"]?.toFloatOrNull() ?: Stats.MAX // older saves have no mind value
+            st.bleeding = m["bleeding"]?.toFloatOrNull() ?: 0f
+            st.infected = m["infected"] == "true"
+            st.brokenArm = m["brokenArm"] == "true"
+            st.brokenLeg = m["brokenLeg"] == "true"
             st.fuel = m.getValue("fuel").toFloat()
             st.hull = m.getValue("hull").toFloat()
             st.credits = m.getValue("credits").toInt()

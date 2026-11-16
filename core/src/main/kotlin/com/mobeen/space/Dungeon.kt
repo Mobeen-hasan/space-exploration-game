@@ -82,6 +82,18 @@ enum class ItemType(val label: String, val consumable: Boolean) {
     VIAL_BLUE("Blue vial", true),
     VIAL_AMBER("Amber vial", true),
     VIAL_BLACK("Black vial", true),
+
+    /** Stops bleeding. */
+    BANDAGE("Bandage", true),
+
+    /** Sets a broken bone (the leg first). */
+    SPLINT("Splint", true),
+
+    /** Cures an infection. */
+    ANTISEPTIC("Antiseptic", true),
+
+    /** Something strange in the ruins; stepping onto it asks what you will do (see [GrimEvent]). */
+    EVENT("Something strange", false),
     ;
 
     val isVial: Boolean get() = name.startsWith("VIAL_")
@@ -136,6 +148,13 @@ class Level(val width: Int, val height: Int) {
 
     fun isLit(x: Int, y: Int): Boolean = inBounds(x, y) && lit[index(x, y)]
 
+    /** Hidden traps by tile index, and the ones the player has spotted. */
+    val traps = HashMap<Int, TrapType>()
+    val knownTraps = HashSet<Int>()
+
+    fun trapAt(x: Int, y: Int): TrapType? = if (inBounds(x, y)) traps[index(x, y)] else null
+    fun isKnownTrap(x: Int, y: Int): Boolean = inBounds(x, y) && index(x, y) in knownTraps
+
     fun monsterAt(x: Int, y: Int): Monster? = monsters.firstOrNull { it.x == x && it.y == y }
     fun itemAt(x: Int, y: Int): FloorItem? = items.firstOrNull { it.x == x && it.y == y }
 }
@@ -144,4 +163,36 @@ class Level(val width: Int, val height: Int) {
 class Phantom(var x: Int, var y: Int, var ttl: Int, val size: Float) {
     var drawX = x.toFloat()
     var drawY = y.toFloat()
+}
+
+/** Hidden dangers in the floor. You may spot one if you pass close by with your eyes open. */
+enum class TrapType(val label: String) {
+    SPIKES("a spike plate"),
+    PIT("a false floor over a pit"),
+    NOXIOUS("a noxious vent"),
+    ALARM("an alarm wire"),
+}
+
+/** Strange things in the ruins. Each asks what you will do; the outcome is never certain. */
+enum class GrimEvent(val text: String, val options: List<String>) {
+    CORPSE(
+        "A body in a torn ship suit lies slumped against the wall, one hand clenched around something.",
+        listOf("Search the body", "Leave it be"),
+    ),
+    SHRINE(
+        "A shrine of stacked bones. A single candle burns on top, though there is no draught.",
+        listOf("Kneel and pray", "Take the candle for your lantern", "Leave"),
+    ),
+    SCAVENGER(
+        "A wounded scavenger huddles in the corner. \"Please... a medkit. I know these halls.\"",
+        listOf("Give them a medkit", "Rob them", "Leave them"),
+    ),
+    LOCKER(
+        "A rusted locker with a coin slot. Something rattles inside.",
+        listOf("Feed it 20 credits", "Force it open", "Leave it"),
+    ),
+    BLACK_POOL(
+        "A pool of black, still water. Something glints at the bottom.",
+        listOf("Reach in", "Leave it"),
+    ),
 }

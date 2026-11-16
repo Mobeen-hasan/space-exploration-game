@@ -362,6 +362,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             batch, "CREDITS ${state.stats.credits}    DAY ${state.stats.day}",
             barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true) + barH * 0.4f,
         )
+        StatsHud.drawInjuries(batch, font, state.stats, barX, barY + StatsHud.stackHeight(barH, gap, showAir = false, showShip = true) + barH * 1.5f)
         batch.end()
     }
 

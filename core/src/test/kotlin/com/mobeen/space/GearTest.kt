@@ -145,6 +145,6 @@ class GearTest {
         val c = GameState()
         assertTrue(SaveCodec.decode(c, old))
         assertEquals(GearKind.STUN_BATON, assertNotNull(c.loadout.weapon).kind)
-        assertEquals(3, c.locker.size, "a new game's starting kit")
+        assertEquals(GameState.STARTING_KIT, c.locker, "a new game's starting kit")
     }
 }

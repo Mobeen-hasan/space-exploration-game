@@ -8,6 +8,9 @@ object Shop {
         ItemType.OIL_FLASK to 15,
         ItemType.STIM to 15,
         ItemType.RATION to 8,
+        ItemType.BANDAGE to 10,
+        ItemType.SPLINT to 20,
+        ItemType.ANTISEPTIC to 25,
     )
 
     fun canBuy(state: GameState, type: ItemType): Boolean {
