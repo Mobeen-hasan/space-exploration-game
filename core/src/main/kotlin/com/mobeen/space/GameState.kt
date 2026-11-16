@@ -5,6 +5,10 @@ class GameState {
     val ship = Ship()
     val field = PlanetField()
     val discovered = HashSet<Long>()
+
+    /** Planets you have seen on radar (shown on the star map), and signals you have scanned (see [Signal.key]). */
+    val charted = HashSet<Long>()
+    val scanned = HashSet<String>()
     val stats = Stats()
     val bounties = BountyBoard()
 
@@ -60,6 +64,8 @@ class GameState {
         freshHunter()
         stats.credits = Stats.START_CREDITS
         discovered.clear()
+        charted.clear()
+        scanned.clear()
         bounties.reset(keepRecord = false)
         clock = 0f
         hardcore = hardcoreMode

@@ -129,9 +129,11 @@ class InteriorScreen(
         val stats = state.stats
 
         val paused = game.devMenu.frame(game.devMode, w, h) { DevMenu.common(state) } ||
+            game.journal.frame(w, h, state, blocked = menuOpen || sleeping) ||
             game.pauseMenu.frame(w, h, blocked = menuOpen || sleeping, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }
         if (paused) { // the developer menu or the pause menu is open
             draw(w, h, nearestStation())
+            game.journal.draw(state, shapes, batch, font, glyphs, hudCamera.combined, w, h)
             game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
             game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
             return
@@ -164,6 +166,7 @@ class InteriorScreen(
         }
 
         draw(w, h, station)
+        game.journal.draw(state, shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }
@@ -246,6 +249,10 @@ class InteriorScreen(
             Option("Treat injuries   (with supplies from your locker)", state.stats.injured, "Bandages or medkits for bleeding, antiseptic for infection, splints for broken bones.\nSleeping in the bunk also sets bones and stops bleeding.") {
                 val done = state.treatFromLocker()
                 showToast(if (done.isEmpty()) "Your locker has nothing that helps. Buy supplies at the shop." else "You " + done.joinToString(", ") + ".", 4f)
+            },
+            Option("Journal and star map   (${state.discovered.size} worlds, ${state.scanned.size} signals)", true) {
+                closeMenu()
+                game.journal.show()
             },
             Option("Supply shop   (locker ${state.locker.size}/${GameState.LOCKER_SIZE})", true) {
                 menuPage = MenuPage.SHOP

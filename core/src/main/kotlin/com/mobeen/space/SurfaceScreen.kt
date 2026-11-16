@@ -53,6 +53,9 @@ class SurfaceScreen(
     private var toastTimer = 0f
     private var hurtFlash = 0f
     private var nearEntrance = false
+    private val signals = Discoveries.signalsFor(planet)
+    private var scanFxTimer = 0f
+    private var scanFxX = 0f
     private var lastHealth = state.stats.health
 
     init {
@@ -83,9 +86,11 @@ class SurfaceScreen(
         val dw = Gdx.graphics.width.toFloat()
         val dh = Gdx.graphics.height.toFloat()
         val paused = game.devMenu.frame(game.devMode, dw, dh) { devOptions() } ||
+            game.journal.frame(dw, dh, state, blocked = false) ||
             game.pauseMenu.frame(dw, dh, blocked = false, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }
         if (paused) { // the developer menu or the pause menu is open
             draw(dw, dh, abs(terrain.padOffset(player.x)) < BOARD_RANGE)
+            game.journal.draw(state, shapes, batch, font, glyphs, hudCamera.combined, dw, dh)
             game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, dw, dh)
             game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, dw, dh, state.stats.invulnerable)
             return
@@ -112,15 +117,24 @@ class SurfaceScreen(
 
         val nearShip = abs(terrain.padOffset(player.x)) < BOARD_RANGE
         nearEntrance = abs(terrain.entranceOffset(player.x)) < ENTER_RANGE
+        val nearSignal = signals.firstOrNull { it.key !in state.scanned && abs(Discoveries.loopOffset(it.x, player.x)) < Discoveries.SCAN_RANGE }
         controls.thrustLabel = "JUMP"
         controls.showBrake = false
-        controls.actionEnabled = nearShip || nearEntrance
-        controls.actionLabel = if (nearShip) "BOARD" else "ENTER"
+        controls.actionEnabled = nearShip || nearEntrance || nearSignal != null
+        controls.actionLabel = when {
+            nearShip -> "BOARD"
+            nearEntrance -> "ENTER"
+            else -> "SCAN"
+        }
         controls.update(w, h)
         if (controls.actionPressed) {
-            if (nearShip) game.enterInterior(InteriorScreen.AIRLOCK_SPAWN) else if (nearEntrance) game.enterDungeon(planet)
-            return
+            when {
+                nearShip -> { game.enterInterior(InteriorScreen.AIRLOCK_SPAWN); return }
+                nearEntrance -> { game.enterDungeon(planet); return }
+                nearSignal != null -> scan(nearSignal)
+            }
         }
+        if (scanFxTimer > 0f) scanFxTimer -= dt
 
         val walkScale = if (stats.energy < 20f) 0.7f else 1f
         accumulator += dt
@@ -137,6 +151,7 @@ class SurfaceScreen(
         camera.update()
 
         draw(w, h, nearShip)
+        game.journal.draw(state, shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }
@@ -196,6 +211,13 @@ class SurfaceScreen(
         scenery.drawMountains(shapes, camX, camY, halfW, bottomY)
         scenery.drawGround(shapes, camX, halfW, bottomY)
         scenery.drawDecor(shapes, camX, halfW)
+        for (s in signals) { // landmarks and smaller finds, drawn wherever they are near the camera
+            val sx = camX + Discoveries.loopOffset(s.x, camX)
+            if (abs(sx - camX) > halfW + 320f) continue
+            val scanned = s.key in state.scanned
+            if (s.landmark) scenery.drawLandmark(shapes, sx, terrain.height(sx), s.shape, scanned, time)
+            else scenery.drawSignal(shapes, sx, terrain.height(sx), s.style, scanned, time)
+        }
 
         val shipX = Math.round(camX / Terrain.WIDTH) * Terrain.WIDTH
         scenery.drawShip(shapes, shipX, terrain.height(shipX), nearShip)
@@ -210,6 +232,11 @@ class SurfaceScreen(
         scenery.drawLiquidGlow(shapes, camX, halfW, time)
         scenery.drawEntranceBeam(shapes, entranceX, terrain.height(entranceX), time, isBountyPlanet())
         scenery.drawPlayerGlow(shapes, player)
+        if (scanFxTimer > 0f) { // a scanner sweep spreading out from what you just logged
+            val t = 1f - scanFxTimer
+            shapes.setColor(0.4f, 1f, 0.8f, 0.5f * scanFxTimer)
+            shapes.circle(scanFxX, terrain.height(scanFxX) + 20f, 10f + t * 120f, 40)
+        }
         ambient.draw(shapes, camX, camY, camera.zoom, time, scenery.daylight)
         shapes.end()
 
@@ -269,6 +296,25 @@ class SurfaceScreen(
             font.draw(batch, t, (w - glyphs.width) / 2f, margin + lh * 3f)
         }
 
+        val signalHere = signals.firstOrNull { it.key !in state.scanned && abs(Discoveries.loopOffset(it.x, player.x)) < Discoveries.SCAN_RANGE }
+        if (signalHere != null && !nearShip && !nearEntrance) {
+            val t = "E / SCAN: log the ${if (signalHere.landmark) signalHere.name.lowercase() else "signal"}"
+            glyphs.setText(font, t)
+            font.setColor(0.5f, 1f, 0.85f, 1f)
+            font.draw(batch, t, (w - glyphs.width) / 2f, margin + lh * 3f)
+        }
+        // Where the nearest unscanned signal is, and how many are logged here.
+        val next = Discoveries.nearestUnscanned(signals, state.scanned, player.x)
+        val logged = signals.count { it.key in state.scanned }
+        font.setColor(0.5f, 1f, 0.85f, 0.95f)
+        val pointer = if (next == null) "All ${signals.size} signals on this world are logged." else {
+            val d = Discoveries.loopOffset(next.x, player.x)
+            val arrow = if (d >= 0f) ">>" else "<<"
+            val what = if (next.landmark) "LANDMARK" else "SIGNAL"
+            "$what  $arrow  ${(abs(d) / 10f).toInt()} m      Logged $logged/${signals.size}"
+        }
+        font.draw(batch, pointer, margin, h - margin - lh * 5f)
+
         if (nearEntrance && !nearShip) {
             val t = "E / ENTER: explore the ruins"
             glyphs.setText(font, t)
@@ -284,6 +330,17 @@ class SurfaceScreen(
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, margin + lh * 1.5f)
         }
+    }
+
+    /** Log a signal: it goes into the journal and the data is worth a few credits. */
+    private fun scan(s: Signal) {
+        if (!state.scanned.add(s.key)) return
+        state.discovered.add(planet.id)
+        state.stats.credits += s.reward
+        scanFxTimer = 1f
+        scanFxX = player.x + Discoveries.loopOffset(s.x, player.x)
+        toast = "Logged: ${s.name}. (+${s.reward} credits)  Press J to read your journal."
+        toastTimer = 4f
     }
 
     private fun isBountyPlanet(): Boolean = state.bounties.hunting?.planetId == planet.id

@@ -26,6 +26,8 @@ object SaveCodec {
             "day" to st.day.toString(),
             "clock" to s.clock.toString(),
             "discovered" to s.discovered.joinToString(","),
+            "charted" to s.charted.joinToString(","),
+            "scanned" to s.scanned.joinToString(";"),
             "shipX" to ship.pos.x.toString(),
             "shipY" to ship.pos.y.toString(),
             "shipVX" to ship.vel.x.toString(),
@@ -66,6 +68,10 @@ object SaveCodec {
             s.clock = m.getValue("clock").toFloat()
             s.discovered.clear()
             m.getValue("discovered").split(",").filter { it.isNotBlank() }.forEach { s.discovered.add(it.toLong()) }
+            s.charted.clear()
+            m["charted"]?.split(",")?.filter { it.isNotBlank() }?.forEach { it.toLongOrNull()?.let { id -> s.charted.add(id) } }
+            s.scanned.clear()
+            m["scanned"]?.split(";")?.filter { it.isNotBlank() }?.forEach { s.scanned.add(it) }
 
             val ship = s.ship
             ship.restore(

@@ -13,6 +13,7 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
     val state = GameState()
     val devMenu = DevMenu()
     val pauseMenu = PauseMenu()
+    val journal = JournalOverlay()
     private lateinit var space: GameScreen
     private var transient: Screen? = null // the surface or interior screen currently in use
     private var pendingSwitch: (() -> Screen)? = null
@@ -41,6 +42,7 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
         SaveStore.save(state)
         inGame = false
         pauseMenu.close()
+        journal.close()
         requestSwitch { TitleScreen(this, state) }
     }
 

@@ -476,6 +476,88 @@ class SurfaceScenery(private val planet: Planet, private val terrain: Terrain) {
         shapes.rect(ex - 14f, gy + 90f, 28f, 900f, cA, cA, cB, cB)
     }
 
+    /**
+     * A small scannable find, in one of three looks per world. Unscanned ones send up a slow scanner ping;
+     * scanned ones are drawn a little dimmer.
+     */
+    fun drawSignal(shapes: ShapeRenderer, x: Float, gy: Float, style: Int, scanned: Boolean, time: Float) {
+        val k = if (scanned) 0.7f else 1f
+        val c = planet.c2
+        when (style) {
+            0 -> { // a cluster of shards or crystals
+                col(shapes, c.r * k, c.g * k, c.b * k)
+                shapes.triangle(x - 14f, gy - 2f, x - 6f, gy - 2f, x - 11f, gy + 26f)
+                shapes.triangle(x - 6f, gy - 2f, x + 4f, gy - 2f, x - 1f, gy + 38f)
+                shapes.triangle(x + 3f, gy - 2f, x + 13f, gy - 2f, x + 9f, gy + 22f)
+            }
+            1 -> { // bones, an arch or a vein of stone
+                col(shapes, 0.85f * k, 0.82f * k, 0.75f * k)
+                shapes.rectLine(x - 16f, gy, x - 10f, gy + 22f, 4f)
+                shapes.rectLine(x - 10f, gy + 22f, x + 10f, gy + 24f, 4f)
+                shapes.rectLine(x + 10f, gy + 24f, x + 16f, gy, 4f)
+                col(shapes, c.r * 0.6f * k, c.g * 0.6f * k, c.b * 0.6f * k)
+                shapes.rect(x - 6f, gy - 2f, 12f, 8f)
+            }
+            else -> { // something alive: blooms, caps or drifting lights
+                col(shapes, 0.3f * k, 0.5f * k, 0.3f * k)
+                shapes.rect(x - 2f, gy - 2f, 4f, 16f)
+                shapes.setColor(c.r * k, c.g * k, c.b * k, 1f) // glows, so not darkened by night
+                shapes.circle(x, gy + 18f, 7f, 14)
+                shapes.circle(x - 9f, gy + 10f, 4f, 10)
+                shapes.circle(x + 9f, gy + 12f, 4.5f, 10)
+            }
+        }
+        if (!scanned) {
+            val p = (time * 0.6f) % 1f
+            shapes.setColor(0.4f, 1f, 0.8f, 0.5f * (1f - p))
+            shapes.circle(x, gy + 46f + p * 10f, 3f + p * 4f, 10)
+        }
+    }
+
+    /** A landmark: a big structure you can see from a long way off. */
+    fun drawLandmark(shapes: ShapeRenderer, x: Float, gy: Float, shape: LandmarkShape, scanned: Boolean, time: Float) {
+        val glow = 0.6f + 0.4f * sin(time * 1.5f)
+        when (shape) {
+            LandmarkShape.WRECK -> {
+                col(shapes, 0.35f, 0.37f, 0.42f)
+                shapes.triangle(x - 140f, gy - 4f, x + 110f, gy - 4f, x + 60f, gy + 90f)
+                shapes.triangle(x - 140f, gy - 4f, x + 60f, gy + 90f, x - 90f, gy + 70f)
+                col(shapes, 0.25f, 0.26f, 0.3f)
+                shapes.triangle(x + 40f, gy + 70f, x + 70f, gy + 150f, x + 90f, gy + 60f) // a broken fin
+                shapes.setColor(1f, 0.75f, 0.4f, if (scanned) 0.4f else glow)
+                for (k in 0 until 4) shapes.rect(x - 70f + k * 30f, gy + 40f + k * 6f, 10f, 7f)
+            }
+            LandmarkShape.MONOLITH -> {
+                col(shapes, 0.12f, 0.12f, 0.15f)
+                shapes.rect(x - 22f, gy - 4f, 44f, 230f)
+                shapes.triangle(x - 22f, gy + 226f, x + 22f, gy + 226f, x, gy + 250f)
+                val a = planet.atmoColor
+                shapes.setColor(a.r, a.g, a.b, if (scanned) 0.35f else glow)
+                for (k in 0 until 6) shapes.rect(x - 4f, gy + 30f + k * 32f, 8f, 12f)
+            }
+            LandmarkShape.BONES -> {
+                col(shapes, 0.82f, 0.8f, 0.72f)
+                shapes.rectLine(x - 150f, gy + 30f, x + 150f, gy + 40f, 8f) // the spine
+                for (k in 0 until 7) {
+                    val bx = x - 120f + k * 40f
+                    shapes.rectLine(bx, gy + 36f, bx - 10f, gy + 110f - k * 4f, 6f)
+                    shapes.rectLine(bx - 10f, gy + 110f - k * 4f, bx + 18f, gy + 140f - k * 6f, 5f)
+                }
+                shapes.circle(x + 160f, gy + 50f, 26f, 18) // the skull
+                col(shapes, 0.1f, 0.08f, 0.08f)
+                shapes.circle(x + 168f, gy + 56f, 7f, 10)
+            }
+            LandmarkShape.DOME -> {
+                col(shapes, 0.4f, 0.42f, 0.48f)
+                dome(shapes, x, gy - 4f, 240f, 130f, 16)
+                col(shapes, 0.28f, 0.3f, 0.35f)
+                shapes.rect(x - 130f, gy - 4f, 260f, 12f)
+                shapes.setColor(1f, 0.85f, 0.5f, if (scanned) 0.4f else glow)
+                shapes.rect(x - 14f, gy + 8f, 28f, 40f)
+            }
+        }
+    }
+
     /** The player figure. Feet rest at (p.x, p.y). */
     fun drawPlayer(shapes: ShapeRenderer, p: SurfacePlayer) {
         CharacterArt.draw(shapes, p.x, p.y, p.facing, p.walkTime, p.grounded, tint)

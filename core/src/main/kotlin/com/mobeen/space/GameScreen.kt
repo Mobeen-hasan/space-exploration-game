@@ -78,6 +78,10 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             drawFrame(w, h)
             return
         }
+        if (game.journal.frame(w, h, state, blocked = false)) { // your notes and the star map
+            drawFrame(w, h)
+            return
+        }
         if (game.pauseMenu.frame(w, h, blocked = false, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }) {
             drawFrame(w, h)
             return
@@ -106,6 +110,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             return
         }
         field.near(ship.pos.x, ship.pos.y, RADAR_RANGE, nearby)
+        for (p in nearby) state.charted.add(p.id) // anything that shows up on radar goes on the star map
 
         accumulator += dt
         while (accumulator >= STEP) {
@@ -125,6 +130,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
 
         hudViewport.apply()
         drawHud(w, h)
+        game.journal.draw(state, shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, w, h)
         game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, w, h, state.stats.invulnerable)
     }

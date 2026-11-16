@@ -345,7 +345,7 @@ class ScreenFlowTest {
         val h = atTerminal()
         h.state.locker.clear()
         val credits = h.state.stats.credits
-        repeat(5) { h.press(Keys.S) } // down to "Supply shop"
+        repeat(6) { h.press(Keys.S) } // down to "Supply shop"
         h.press(Keys.ENTER)
         h.press(Keys.ENTER) // buy a medkit (first row)
         h.frame(2)
@@ -354,7 +354,7 @@ class ScreenFlowTest {
         h.press(Keys.ESCAPE) // back to the main page
 
         h.state.loadout.bag.add(Gear(GearKind.COMBAT_WEAVE))
-        repeat(6) { h.press(Keys.S) } // down to "Gear locker"
+        repeat(7) { h.press(Keys.S) } // down to "Gear locker"
         h.press(Keys.ENTER)
         repeat(3) { h.press(Keys.S) } // past the three "now wearing" rows to the first spare
         h.press(Keys.ENTER)
