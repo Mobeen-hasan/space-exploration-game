@@ -560,6 +560,10 @@ class DungeonTest {
                     Pathfinder.canStep(lv, run.px, run.py, it.x - run.px, it.y - run.py)
             }
             if (adjacent != null) {
+                // Against heavy hitters, go for the arms first to weaken their blows; otherwise strike the body.
+                val heavy = adjacent.type == MonsterType.BRUTE || adjacent.type.boss
+                val want = if (heavy && adjacent.armWounds < 2 && adjacent.state != AiState.SLEEPING) BodyPart.ARMS else BodyPart.BODY
+                while (run.aim != want) run.cycleAim()
                 run.tryMove(adjacent.x - run.px, adjacent.y - run.py)
                 continue
             }

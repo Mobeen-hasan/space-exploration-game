@@ -16,6 +16,14 @@ enum class Tile(val walkable: Boolean, val opaque: Boolean, val harm: Int) {
 
 enum class AiState { SLEEPING, WANDERING, HUNTING }
 
+/** Where a blow lands. Aiming away from the body is harder, but each part does something extra. */
+enum class BodyPart(val label: String, val aimPenalty: Float, val damage: Float, val hint: String) {
+    BODY("body", 0f, 1f, "a plain, sure blow"),
+    HEAD("head", 0.20f, 1.5f, "hard to hit, heavy damage, may stun"),
+    ARMS("arms", 0.10f, 0.8f, "weakens its attacks"),
+    LEGS("legs", 0.10f, 0.8f, "slows it down"),
+}
+
 /** Health and damage are on the same 0-100 scale as the player's own health. */
 enum class MonsterType(
     val label: String,
@@ -58,6 +66,14 @@ class Monster(
 
     /** Set the first time the player sees this monster; the first sight of something is what scares you. */
     var spotted = false
+
+    /** Blows to the arms (each takes a quarter off its damage) and legs (it loses every other turn), up to two each. */
+    var armWounds = 0
+    var legWounds = 0
+
+    /** Turns left reeling from a blow to the head. A stunned monster does nothing. */
+    var stunned = 0
+    var limpTick = false
 }
 
 enum class ItemType(val label: String, val consumable: Boolean) {

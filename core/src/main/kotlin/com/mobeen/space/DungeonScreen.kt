@@ -16,6 +16,7 @@ import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.utils.viewport.ExtendViewport
 import com.badlogic.gdx.utils.viewport.ScreenViewport
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -76,6 +77,7 @@ class DungeonScreen(
     private val gearMenu = OverlayMenu("GEAR")
     private val eventMenu = OverlayMenu("SOMETHING IN THE DARK")
     private val gearCenter = Vector2()
+    private val aimCenter = Vector2()
     private val strikes = ArrayList<ActiveAttack>()
 
     private var toast: String? = null
@@ -195,6 +197,7 @@ class DungeonScreen(
         waitCenter.set(w - margin - waitRadius, margin + slot + gap * 2f + waitRadius)
         lightCenter.set(waitCenter.x - waitRadius * 2.4f, waitCenter.y)
         gearCenter.set(lightCenter.x - waitRadius * 2.4f, waitCenter.y)
+        aimCenter.set(gearCenter.x - waitRadius * 2.4f, waitCenter.y)
         stairsRadius = waitRadius * 1.15f
         stairsCenter.set(waitCenter.x, waitCenter.y + waitRadius + stairsRadius + gap * 2f)
     }
@@ -279,6 +282,7 @@ class DungeonScreen(
             run.waitTurn()
         }
         if (input.isKeyJustPressed(Input.Keys.L)) run.toggleLantern()
+        if (input.isKeyJustPressed(Input.Keys.T)) run.cycleAim()
         if ((input.isKeyJustPressed(Input.Keys.E) || input.isKeyJustPressed(Input.Keys.ENTER)) && run.stairsHere() != null) {
             cancelTravel()
             run.useStairs()
@@ -337,6 +341,10 @@ class DungeonScreen(
         if (run.stairsHere() != null && hypot(sx - stairsCenter.x, ty - stairsCenter.y) <= stairsRadius) {
             cancelTravel()
             run.useStairs()
+            return
+        }
+        if (hypot(sx - aimCenter.x, ty - aimCenter.y) <= waitRadius) {
+            run.cycleAim()
             return
         }
         if (hypot(sx - gearCenter.x, ty - gearCenter.y) <= waitRadius) {
@@ -685,6 +693,19 @@ class DungeonScreen(
                 shapes.circle(cx - r * 0.35f, cy + 2f, r * 0.11f, 6)
                 shapes.circle(cx + r * 0.35f, cy + 2f, r * 0.11f, 6)
             }
+            if (m.stunned > 0) { // little stars circling a stunned head
+                shapes.setColor(1f, 0.9f, 0.3f, 1f)
+                for (k in 0 until 3) {
+                    val a = time * 5f + k * 2.09f
+                    shapes.circle(cx + cos(a) * r * 0.8f, cy + r + 9f + sin(a) * 2.5f, 2f, 6)
+                }
+            }
+            if (m.legWounds > 0 || m.armWounds > 0) shapes.setColor(0.95f, 0.15f, 0.15f, 1f)
+            for (k in 0 until m.legWounds) shapes.rect(cx - r * 0.6f, cy - r - 3f - k * 3f, r * 1.2f, 2f) // lame
+            for (k in 0 until m.armWounds) { // weakened arms
+                shapes.rect(cx - r - 3f, cy - 2f + k * 4f, 3f, 2f)
+                shapes.rect(cx + r, cy - 2f + k * 4f, 3f, 2f)
+            }
             if (m.hp < m.maxHp) {
                 val bw = r * 2f
                 shapes.setColor(0f, 0f, 0f, 0.7f)
@@ -854,6 +875,8 @@ class DungeonScreen(
         shapes.circle(lightCenter.x, lightCenter.y, waitRadius, 28)
         shapes.setColor(0.85f, 0.88f, 1f, if (run.bag.isNotEmpty()) 0.3f else 0.12f)
         shapes.circle(gearCenter.x, gearCenter.y, waitRadius, 28)
+        shapes.setColor(1f, 0.45f, 0.4f, if (run.aim == BodyPart.BODY) 0.12f else 0.32f)
+        shapes.circle(aimCenter.x, aimCenter.y, waitRadius, 28)
 
         // Item slots
         for (i in slotRects.indices) {
@@ -926,6 +949,8 @@ class DungeonScreen(
             else -> "No bounty here. Explore and loot."
         }
         font.draw(batch, goal, margin, h - margin - lh)
+        font.setColor(1f, 0.7f, 0.65f, 1f)
+        font.draw(batch, "AIM: ${run.aim.label.uppercase()}  -  ${run.aim.hint}   (T or the AIM button to change)", margin, h - margin - lh * 2f)
 
         // Item slot numbers
         font.setColor(1f, 1f, 1f, 0.9f)
@@ -937,6 +962,10 @@ class DungeonScreen(
         }
         glyphs.setText(font, "WAIT")
         font.draw(batch, "WAIT", waitCenter.x - glyphs.width / 2f, waitCenter.y + glyphs.height / 2f)
+        font.setColor(1f, 0.85f, 0.8f, 1f)
+        val aimLabel = run.aim.label.uppercase()
+        glyphs.setText(font, aimLabel)
+        font.draw(batch, aimLabel, aimCenter.x - glyphs.width / 2f, aimCenter.y + glyphs.height / 2f)
         font.setColor(0.9f, 0.92f, 1f, 1f)
         glyphs.setText(font, "GEAR")
         font.draw(batch, "GEAR", gearCenter.x - glyphs.width / 2f, gearCenter.y + glyphs.height / 2f)
@@ -983,9 +1012,9 @@ class DungeonScreen(
 
         if (time < 12f) {
             font.setColor(0.8f, 0.9f, 1f, min(1f, (12f - time) / 2f))
-            val hint = "WASD / arrows: move and attack    Space: wait    L: lantern    G: gear    1-6: use item    E: stairs"
+            val hint = "WASD / arrows: move and attack    T: aim    Space: wait    L: lantern    G: gear    1-6: use item    E: stairs"
             glyphs.setText(font, hint)
-            font.draw(batch, hint, (w - glyphs.width) / 2f, h - margin - lh * 2f)
+            font.draw(batch, hint, (w - glyphs.width) / 2f, h - margin - lh * 4.2f)
         }
     }
 

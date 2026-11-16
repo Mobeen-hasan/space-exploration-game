@@ -180,6 +180,16 @@ class DungeonRun(
 
     private var calmTurns = 0
 
+    /** Where your blows are aimed. Kept until you change it. */
+    var aim = BodyPart.BODY
+        private set
+
+    /** Aim at the next body part. Costs no turn. */
+    fun cycleAim() {
+        aim = BodyPart.entries[(aim.ordinal + 1) % BodyPart.entries.size]
+        log("You aim for the ${aim.label}: ${aim.hint}.")
+    }
+
     /** A strange thing you are standing over, waiting for you to choose what to do. Nothing else happens until you do. */
     var pendingEvent: GrimEvent? = null
         private set
@@ -480,17 +490,20 @@ class DungeonRun(
 
     private fun attack(m: Monster) {
         val ambush = m.state == AiState.SLEEPING // a sleeping target cannot dodge
-        val aim = weapon.accuracy
-        var accuracy = if (state.stats.mind < PANIC_MIND) aim - PANIC_ACCURACY_LOSS else aim
+        val weaponAim = weapon.accuracy
+        var accuracy = if (state.stats.mind < PANIC_MIND) weaponAim - PANIC_ACCURACY_LOSS else weaponAim
         if (state.stats.brokenArm) accuracy -= BROKEN_ARM_AIM_LOSS
+        val part = aim
+        accuracy -= part.aimPenalty
         if (!ambush && rnd.nextFloat() > accuracy) {
-            log("You miss the ${m.displayName}.")
+            log(if (part == BodyPart.BODY) "You miss the ${m.displayName}." else "You swing for its ${part.label} and miss.")
             floatTexts.add(FloatText(m.x, m.y, "miss", FloatText.INFO))
             wake(m)
             return
         }
         val rawDmg = (rnd.nextInt(weapon.dmgMin, weapon.dmgMax + 1) + weaponBonus) * (if (ambush) weapon.ambush else 1)
-        val dmg = if (state.stats.brokenArm) max(1, (rawDmg * BROKEN_ARM_DAMAGE).toInt()) else rawDmg
+        val armed = if (state.stats.brokenArm) rawDmg * BROKEN_ARM_DAMAGE else rawDmg.toFloat()
+        val dmg = max(1, (armed * part.damage).toInt())
         m.hp -= dmg
         m.flash = 0.2f
         floatTexts.add(FloatText(m.x, m.y, "-$dmg", FloatText.HIT_MONSTER))
@@ -510,8 +523,32 @@ class DungeonRun(
                 level.items.add(FloorItem(randomConsumable(), m.x, m.y))
             }
         } else {
-            log(if (ambush) "You ambush the ${m.displayName} for $dmg!" else "You hit the ${m.displayName} for $dmg.")
+            val where = if (part == BodyPart.BODY) "" else "'s ${part.label}"
+            log(if (ambush) "You ambush the ${m.displayName}$where for $dmg!" else "You hit the ${m.displayName}$where for $dmg.")
+            woundMonster(m, part)
             wake(m)
+        }
+    }
+
+    /** What a blow to a particular part does, beyond the damage. */
+    private fun woundMonster(m: Monster, part: BodyPart) {
+        when (part) {
+            BodyPart.HEAD -> if (rnd.nextFloat() < HEAD_STUN_CHANCE) {
+                m.stunned = HEAD_STUN_TURNS
+                floatTexts.add(FloatText(m.x, m.y, "stunned", FloatText.INFO))
+                log("The ${m.displayName} reels, stunned!")
+            }
+            BodyPart.ARMS -> if (m.armWounds < 2) {
+                m.armWounds++
+                floatTexts.add(FloatText(m.x, m.y, "arm hit", FloatText.INFO))
+                log("The ${m.displayName}'s blows grow weaker.")
+            }
+            BodyPart.LEGS -> if (m.legWounds < 2) {
+                m.legWounds++
+                floatTexts.add(FloatText(m.x, m.y, "leg hit", FloatText.INFO))
+                log("The ${m.displayName} staggers. It is slowed.")
+            }
+            BodyPart.BODY -> {}
         }
     }
 
@@ -788,7 +825,15 @@ class DungeonRun(
     }
 
     private fun act(m: Monster) {
-        val repeats = if (m.type.fast) 2 else 1
+        if (m.stunned > 0) { // reeling from a blow to the head
+            m.stunned--
+            return
+        }
+        if (m.legWounds > 0) { // lame: it only manages every other turn
+            m.limpTick = !m.limpTick
+            if (m.limpTick) return
+        }
+        val repeats = if (m.type.fast && m.legWounds == 0) 2 else 1
         for (step in 0 until repeats) {
             if (actOnce(m, step)) break
         }
@@ -893,15 +938,38 @@ class DungeonRun(
             floatTexts.add(FloatText(px, py, "block", FloatText.INFO))
             return
         }
+        val part = if (ranged) BodyPart.BODY else rollTargetPart()
         val base = rnd.nextInt(m.type.dmgMin, m.type.dmgMax + 1)
-        val dmg = max(1, (base * m.dmgScale).toInt() - armor)
-        val verb = if (ranged) "spits acid at you" else "hits you"
+        val weakened = 1f - 0.25f * m.armWounds
+        val headBonus = if (part == BodyPart.HEAD) 1.15f else 1f
+        val dmg = max(1, (base * m.dmgScale * weakened * headBonus).toInt() - armor)
+        val verb = when {
+            ranged -> "spits acid at you"
+            part == BodyPart.HEAD -> "catches you across the head"
+            part == BodyPart.ARMS -> "hits your arm"
+            part == BodyPart.LEGS -> "hits your leg"
+            else -> "hits you"
+        }
         hurtPlayer(dmg, "$who $verb")
-        if (!dead) rollInjury(m)
+        if (!dead && part == BodyPart.HEAD && !state.stats.invulnerable) {
+            state.stats.mind = max(0f, state.stats.mind - HEAD_HIT_DREAD) // a blow to the head leaves you dazed
+        }
+        if (!dead) rollInjury(m, part)
+    }
+
+    /** Where a monster's blow lands on you: mostly the body, sometimes a limb, now and then the head. */
+    private fun rollTargetPart(): BodyPart {
+        val roll = rnd.nextInt(100)
+        return when {
+            roll < 10 -> BodyPart.HEAD
+            roll < 30 -> BodyPart.ARMS
+            roll < 50 -> BodyPart.LEGS
+            else -> BodyPart.BODY
+        }
     }
 
     /** A blow that lands may leave a lasting injury. Good armor makes that less likely. */
-    private fun rollInjury(m: Monster) {
+    private fun rollInjury(m: Monster, part: BodyPart = BodyPart.BODY) {
         if (state.stats.invulnerable) return
         val guard = 0.7f * (1f - armor * 0.12f).coerceIn(0.35f, 1f)
         fun roll(chance: Float) = rnd.nextFloat() < chance * guard
@@ -912,10 +980,10 @@ class DungeonRun(
                 if (roll(0.05f)) infect("Its rotten teeth broke the skin")
             }
             MonsterType.SPITTER -> if (roll(0.07f)) infect("The acid eats into an old cut")
-            MonsterType.BRUTE -> {
-                if (roll(0.07f)) breakArm("Something in your arm snaps")
-                else if (roll(0.05f)) breakLeg("Your leg buckles with a crack")
-                if (roll(0.07f)) startBleeding("The blow splits your skin")
+            MonsterType.BRUTE -> when (part) { // bones break where the blow lands
+                BodyPart.ARMS -> if (roll(0.35f)) breakArm("Something in your arm snaps")
+                BodyPart.LEGS -> if (roll(0.25f)) breakLeg("Your leg buckles with a crack")
+                else -> if (roll(0.07f)) startBleeding("The blow splits your skin")
             }
             MonsterType.FUGITIVE -> if (roll(0.12f)) startBleeding("A hidden blade finds you")
         }
@@ -1145,6 +1213,9 @@ class DungeonRun(
         const val STARTING_ARMOR = 1 // the ship-issue vest
         const val DROP_CHANCE = 0.12f
         const val BROKEN_ARM_AIM_LOSS = 0.15f
+        const val HEAD_STUN_CHANCE = 0.3f
+        const val HEAD_STUN_TURNS = 2
+        const val HEAD_HIT_DREAD = 2f
         const val BROKEN_ARM_DAMAGE = 0.75f
         const val TRAP_SPOT_CHANCE = 0.3f
         const val ALARM_RANGE = 12
