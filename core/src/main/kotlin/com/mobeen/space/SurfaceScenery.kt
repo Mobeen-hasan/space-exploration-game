@@ -558,6 +558,50 @@ class SurfaceScenery(private val planet: Planet, private val terrain: Terrain) {
         }
     }
 
+    /** A settlement: four buildings with lit doors and signs, lamp posts at either end, and its townsfolk. */
+    fun drawTown(shapes: ShapeRenderer, cx: Float, gy: Float, town: Town, time: Float) {
+        for (side in listOf(-1f, 1f)) { // lamp posts mark the edges of town
+            val lx = cx + side * (Towns.HALF_WIDTH - 20f)
+            col(shapes, 0.25f, 0.25f, 0.28f)
+            shapes.rect(lx - 2f, gy - 2f, 4f, 70f)
+            shapes.setColor(1f, 0.85f, 0.5f, 1f)
+            shapes.circle(lx, gy + 72f, 5f, 12)
+        }
+        for (b in Building.entries) {
+            val bx = cx + b.offset
+            col(shapes, 0.42f, 0.38f, 0.34f)
+            shapes.rect(bx - 75f, gy - 4f, 150f, 90f)
+            col(shapes, 0.3f, 0.22f, 0.2f)
+            shapes.triangle(bx - 85f, gy + 86f, bx + 85f, gy + 86f, bx, gy + 128f)
+            col(shapes, 0.18f, 0.16f, 0.15f)
+            shapes.rect(bx - 14f, gy - 2f, 28f, 46f)
+            shapes.setColor(1f, 0.82f, 0.45f, 0.75f + 0.25f * sin(time * 2f + b.ordinal)) // a lit doorway
+            shapes.rect(bx - 11f, gy, 22f, 40f)
+            col(shapes, 0.25f, 0.2f, 0.16f)
+            shapes.rect(bx - 40f, gy + 58f, 80f, 20f)
+            val sign = when (b) {
+                Building.BAR -> floatArrayOf(1f, 0.7f, 0.25f)
+                Building.TRADER -> floatArrayOf(0.35f, 0.9f, 0.85f)
+                Building.CLINIC -> floatArrayOf(0.95f, 0.3f, 0.3f)
+                Building.DEPOT -> floatArrayOf(1f, 0.55f, 0.2f)
+            }
+            shapes.setColor(sign[0], sign[1], sign[2], 1f) // the sign glows a little at night
+            shapes.rect(bx - 36f, gy + 61f, 72f, 3f)
+            shapes.rect(bx - 36f, gy + 72f, 72f, 3f)
+            for (k in 0..1) { // windows
+                shapes.setColor(1f, 0.85f, 0.5f, 0.6f)
+                shapes.rect(bx - 60f + k * 96f, gy + 30f, 24f, 18f)
+            }
+        }
+        val looks = arrayOf(floatArrayOf(0.75f, 0.85f, 1f), floatArrayOf(1f, 0.85f, 0.7f), floatArrayOf(0.8f, 1f, 0.8f))
+        for (p in town.folk) {
+            val l = looks[p.look % looks.size]
+            val t = Color(l[0] * tint.r, l[1] * tint.g, l[2] * tint.b, 1f)
+            val facing = if (sin(time * 0.3f + p.look) > 0f) 1 else -1
+            CharacterArt.draw(shapes, cx + p.offset, gy, facing, 0f, true, t)
+        }
+    }
+
     /** The player figure. Feet rest at (p.x, p.y). */
     fun drawPlayer(shapes: ShapeRenderer, p: SurfacePlayer) {
         CharacterArt.draw(shapes, p.x, p.y, p.facing, p.walkTime, p.grounded, tint)

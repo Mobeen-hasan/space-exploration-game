@@ -9,6 +9,9 @@ class GameState {
     /** Planets you have seen on radar (shown on the star map), and signals you have scanned (see [Signal.key]). */
     val charted = HashSet<Long>()
     val scanned = HashSet<String>()
+
+    /** Trader stock already bought today, as "planetId:day:slot". Not saved. */
+    val boughtToday = HashSet<String>()
     val stats = Stats()
     val bounties = BountyBoard()
 

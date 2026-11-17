@@ -102,8 +102,10 @@ object Discoveries {
         val pool = kinds.getValue(planet.type)
         val out = ArrayList<Signal>()
         val taken = ArrayList<Float>()
+        val town = Towns.hasTown(planet)
         fun clearOfPads(x: Float) =
-            minOf(x, Terrain.WIDTH - x) > PAD_CLEARANCE && abs(x - Terrain.ENTRANCE_X) > PAD_CLEARANCE
+            minOf(x, Terrain.WIDTH - x) > PAD_CLEARANCE && abs(x - Terrain.ENTRANCE_X) > PAD_CLEARANCE &&
+                (!town || abs(x - Towns.TOWN_X) > Towns.HALF_WIDTH + PAD_CLEARANCE)
         fun spaced(x: Float) = taken.all { abs(it - x) > MIN_SPACING }
 
         var i = 0

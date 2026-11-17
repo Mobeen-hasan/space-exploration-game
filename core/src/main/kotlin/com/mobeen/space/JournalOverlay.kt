@@ -185,6 +185,11 @@ class JournalOverlay {
         font.draw(batch, glyphs, x, y)
         y -= glyphs.height + lineH * 1.2f
 
+        Towns.townFor(planet)?.let { t ->
+            font.setColor(1f, 0.65f, 0.3f, 1f)
+            font.draw(batch, "Settlement: ${t.name}  (bar, trader, clinic, fuel depot)", x, y)
+            y -= lineH * 1.4f
+        }
         if (state.bounties.hunting?.planetId == planet.id) {
             font.setColor(1f, 0.82f, 0.3f, 1f)
             font.draw(batch, "Your bounty target is hiding in the ruins here.", x, y)
@@ -238,6 +243,10 @@ class JournalOverlay {
             val r = max(2.5f, planet.radius * scale)
             if (visited) shapes.setColor(planet.c1.r, planet.c1.g, planet.c1.b, 1f) else shapes.setColor(0.5f, 0.55f, 0.65f, 0.6f)
             shapes.circle(cx + dx, cy + dy, r, 16)
+            if (Towns.hasTown(planet)) { // an orange light: a settlement
+                shapes.setColor(1f, 0.6f, 0.2f, 1f)
+                shapes.rect(cx + dx + r * 0.7f, cy + dy + r * 0.7f, 4f, 4f)
+            }
         }
         shapes.set(ShapeType.Line)
         shapes.setColor(0.4f, 0.75f, 1f, 0.35f)
@@ -286,7 +295,7 @@ class JournalOverlay {
             p[0] + lineH, tabY - lineH * 0.6f,
         )
         font.setColor(0.6f, 0.7f, 0.85f, 0.9f)
-        font.draw(batch, "Scale: ${(range / 1000).toInt()}k across the radius    Bright = visited, grey = seen on radar, gold ring = bounty target", p[0] + lineH, p[1] + lineH * 2.4f)
+        font.draw(batch, "Scale: ${(range / 1000).toInt()}k across the radius    Bright = visited, grey = seen on radar, gold ring = bounty target, orange light = settlement", p[0] + lineH, p[1] + lineH * 2.4f)
     }
 
     companion object {

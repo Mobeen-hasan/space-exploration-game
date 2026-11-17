@@ -54,6 +54,16 @@ class SurfaceScreen(
     private var hurtFlash = 0f
     private var nearEntrance = false
     private val signals = Discoveries.signalsFor(planet)
+    private val town = Towns.townFor(planet)
+    private val townMenu = OverlayMenu("TOWN")
+    private var openBuilding: Building? = null
+    private var talkingTo: Townsperson? = null
+    private val talkLines = HashMap<Townsperson, Int>()
+    private var townNote: String? = null
+    private val worldFont = BitmapFont().apply {
+        region.texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear)
+        data.setScale(0.75f)
+    }
     private var scanFxTimer = 0f
     private var scanFxX = 0f
     private var lastHealth = state.stats.health
@@ -85,11 +95,14 @@ class SurfaceScreen(
 
         val dw = Gdx.graphics.width.toFloat()
         val dh = Gdx.graphics.height.toFloat()
+        val inTown = openBuilding != null || talkingTo != null
         val paused = game.devMenu.frame(game.devMode, dw, dh) { devOptions() } ||
-            game.journal.frame(dw, dh, state, blocked = false) ||
+            game.journal.frame(dw, dh, state, blocked = inTown) ||
+            townFrame(dw, dh) ||
             game.pauseMenu.frame(dw, dh, blocked = false, exitLabel = PauseMenu.SAVE_AND_EXIT) { game.exitToTitle() }
         if (paused) { // the developer menu or the pause menu is open
             draw(dw, dh, abs(terrain.padOffset(player.x)) < BOARD_RANGE)
+            if (openBuilding != null || talkingTo != null) townMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, dw, dh, townRows())
             game.journal.draw(state, shapes, batch, font, glyphs, hudCamera.combined, dw, dh)
             game.pauseMenu.draw(shapes, batch, font, glyphs, hudCamera.combined, dw, dh)
             game.devMenu.draw(game.devMode, shapes, batch, font, glyphs, hudCamera.combined, dw, dh, state.stats.invulnerable)
@@ -118,12 +131,15 @@ class SurfaceScreen(
         val nearShip = abs(terrain.padOffset(player.x)) < BOARD_RANGE
         nearEntrance = abs(terrain.entranceOffset(player.x)) < ENTER_RANGE
         val nearSignal = signals.firstOrNull { it.key !in state.scanned && abs(Discoveries.loopOffset(it.x, player.x)) < Discoveries.SCAN_RANGE }
+        val nearBuilding = buildingNear()
+        val nearFolk = if (nearBuilding == null) folkNear() else null
         controls.thrustLabel = "JUMP"
         controls.showBrake = false
-        controls.actionEnabled = nearShip || nearEntrance || nearSignal != null
+        controls.actionEnabled = nearShip || nearEntrance || nearBuilding != null || nearFolk != null || nearSignal != null
         controls.actionLabel = when {
             nearShip -> "BOARD"
-            nearEntrance -> "ENTER"
+            nearEntrance || nearBuilding != null -> "ENTER"
+            nearFolk != null -> "TALK"
             else -> "SCAN"
         }
         controls.update(w, h)
@@ -131,6 +147,8 @@ class SurfaceScreen(
             when {
                 nearShip -> { game.enterInterior(InteriorScreen.AIRLOCK_SPAWN); return }
                 nearEntrance -> { game.enterDungeon(planet); return }
+                nearBuilding != null -> { openBuilding = nearBuilding; townNote = null }
+                nearFolk != null -> talkingTo = nearFolk
                 nearSignal != null -> scan(nearSignal)
             }
         }
@@ -160,6 +178,7 @@ class SurfaceScreen(
         val list = ArrayList(DevMenu.common(state))
         list.add(DevOption("Teleport to the ruins entrance") { devTeleport(player.x - terrain.entranceOffset(player.x) - 20f) })
         list.add(DevOption("Teleport to the ship") { devTeleport(player.x - terrain.padOffset(player.x) + 40f) })
+        if (town != null) list.add(DevOption("Teleport to the town") { devTeleport(player.x - Towns.townOffset(player.x) - 60f) })
         return list
     }
 
@@ -219,6 +238,10 @@ class SurfaceScreen(
             else scenery.drawSignal(shapes, sx, terrain.height(sx), s.style, scanned, time)
         }
 
+        town?.let { t ->
+            val townX = camX - Towns.townOffset(camX)
+            if (abs(townX - camX) < halfW + Towns.HALF_WIDTH + 100f) scenery.drawTown(shapes, townX, terrain.height(townX), t, time)
+        }
         val shipX = Math.round(camX / Terrain.WIDTH) * Terrain.WIDTH
         scenery.drawShip(shapes, shipX, terrain.height(shipX), nearShip)
         val entranceX = Math.round((camX - Terrain.ENTRANCE_X) / Terrain.WIDTH) * Terrain.WIDTH + Terrain.ENTRANCE_X
@@ -259,6 +282,23 @@ class SurfaceScreen(
         StatsHud.drawShapes(shapes, state.stats, barX, barY, barH * 9f, barH, gap, showAir = true, showShip = false, time = time)
         shapes.end()
 
+        town?.let { t -> // building names and the town's name, in the world
+            val townX = camX - Towns.townOffset(camX)
+            if (abs(townX - camX) < halfW + Towns.HALF_WIDTH + 100f) {
+                viewport.apply()
+                batch.projectionMatrix = camera.combined
+                batch.begin()
+                val gy = terrain.height(townX)
+                worldFont.setColor(1f, 0.95f, 0.85f, 1f)
+                for (b in Building.entries) {
+                    glyphs.setText(worldFont, b.label.uppercase())
+                    worldFont.draw(batch, b.label.uppercase(), townX + b.offset - glyphs.width / 2f, gy + 152f)
+                }
+                batch.end()
+                hudViewport.apply()
+                batch.projectionMatrix = hudCamera.combined
+            }
+        }
         batch.begin()
         drawText(w, h, nearShip)
         StatsHud.drawLabels(batch, font, state.stats, barX, barY, barH, gap, showAir = true, showShip = false)
@@ -296,6 +336,26 @@ class SurfaceScreen(
             font.draw(batch, t, (w - glyphs.width) / 2f, margin + lh * 3f)
         }
 
+        town?.let { t ->
+            if (abs(Towns.townOffset(player.x)) < Towns.HALF_WIDTH + 400f) {
+                val banner = "${t.name.uppercase()}  -  a settlement"
+                glyphs.setText(font, banner)
+                font.setColor(1f, 0.85f, 0.55f, 1f)
+                font.draw(batch, banner, (w - glyphs.width) / 2f, h - margin)
+            }
+            val b = buildingNear()
+            val f = if (b == null) folkNear() else null
+            val prompt = when {
+                b != null -> "E / ENTER: the ${b.label.lowercase()}"
+                f != null -> "E / TALK: ${f.name}, ${f.role.lowercase()}"
+                else -> null
+            }
+            if (prompt != null && !nearShip && !nearEntrance) {
+                glyphs.setText(font, prompt)
+                font.setColor(1f, 0.9f, 0.5f, 1f)
+                font.draw(batch, prompt, (w - glyphs.width) / 2f, margin + lh * 3f)
+            }
+        }
         val signalHere = signals.firstOrNull { it.key !in state.scanned && abs(Discoveries.loopOffset(it.x, player.x)) < Discoveries.SCAN_RANGE }
         if (signalHere != null && !nearShip && !nearEntrance) {
             val t = "E / SCAN: log the ${if (signalHere.landmark) signalHere.name.lowercase() else "signal"}"
@@ -330,6 +390,109 @@ class SurfaceScreen(
             glyphs.setText(font, hint)
             font.draw(batch, hint, (w - glyphs.width) / 2f, margin + lh * 1.5f)
         }
+    }
+
+    // ------------------------------------------------------------------ towns
+
+    private fun buildingNear(): Building? {
+        val t = town ?: return null
+        val off = Towns.townOffset(player.x)
+        return Building.entries.firstOrNull { abs(off - it.offset) < Towns.USE_RANGE }
+    }
+
+    private fun folkNear(): Townsperson? {
+        val t = town ?: return null
+        val off = Towns.townOffset(player.x)
+        return t.folk.firstOrNull { abs(off - it.offset) < 36f }
+    }
+
+    private fun closeTown() {
+        openBuilding = null
+        talkingTo = null
+        townMenu.open = false
+    }
+
+    /** Runs the open building's menu or conversation. Returns true while one is open (the world waits). */
+    private fun townFrame(w: Float, h: Float): Boolean {
+        if (openBuilding == null && talkingTo == null) return false
+        townMenu.open = true
+        townMenu.handle(w, h, townRows())
+        if (!townMenu.open) closeTown()
+        return true
+    }
+
+    private fun townRows(): List<MenuRow> {
+        val t = town ?: return emptyList()
+        val rows = ArrayList<MenuRow>()
+        val st = state.stats
+        val person = talkingTo
+        if (person != null) {
+            rows.add(MenuRow("${person.name}, ${person.role.lowercase()}:", false))
+            val line = person.lines[(talkLines[person] ?: 0) % person.lines.size]
+            for (l in wrapText("\"$line\"", 66)) rows.add(MenuRow(l, false))
+            rows.add(MenuRow("Ask about something else") { talkLines[person] = (talkLines[person] ?: 0) + 1 })
+            rows.add(MenuRow("Goodbye") { closeTown() })
+            return rows
+        }
+        val b = openBuilding ?: return rows
+        rows.add(MenuRow("${t.name.uppercase()} ${b.label.uppercase()}      Credits: ${st.credits}", false))
+        when (b) {
+            Building.BAR -> {
+                rows.add(MenuRow("Buy a drink   (+${TownServices.DRINK_CALM.toInt()} mind)   ${TownServices.DRINK_COST} credits", st.credits >= TownServices.DRINK_COST) {
+                    if (TownServices.buyDrink(state)) townNote = "It burns all the way down. Your hands stop shaking."
+                })
+                rows.add(MenuRow("Pay for a rumor   ${TownServices.RUMOR_COST} credits", st.credits >= TownServices.RUMOR_COST) {
+                    townNote = TownServices.hearRumor(state, planet, kotlin.random.Random.Default)
+                })
+            }
+            Building.TRADER -> {
+                val stock = TownServices.stock(planet, st.day)
+                for ((i, g) in stock.withIndex()) {
+                    val key = "${planet.id}:${st.day}:$i"
+                    if (key in state.boughtToday) {
+                        rows.add(MenuRow("Sold out: ${g.name}", false))
+                        continue
+                    }
+                    val price = TownServices.price(g)
+                    val ok = st.credits >= price && state.loadout.bag.size < Loadout.BAG_SIZE
+                    rows.add(MenuRow("Buy ${g.name}  (${g.describe()})   $price credits", ok) {
+                        if (TownServices.buy(state, g)) {
+                            state.boughtToday.add(key)
+                            townNote = "The ${g.name.lowercase()} is in your bag. Equip it from your ship's gear locker or in the ruins."
+                        }
+                    })
+                }
+                for ((i, g) in state.loadout.bag.withIndex()) {
+                    rows.add(MenuRow("Sell your ${g.name.lowercase()}   +${TownServices.sellPrice(g)} credits") {
+                        val paid = TownServices.sell(state, i)
+                        townNote = "Sold for $paid credits."
+                    })
+                }
+                if (state.loadout.bag.isEmpty()) rows.add(MenuRow("You have no spare gear to sell.", false))
+            }
+            Building.CLINIC -> {
+                val cost = TownServices.treatmentCost(st)
+                if (cost <= 0) rows.add(MenuRow("\"You look healthy enough. Come back when you're not.\"", false))
+                else rows.add(MenuRow("Full treatment: health and injuries   $cost credits", st.credits >= cost) {
+                    if (TownServices.treat(state)) townNote = "Stitched, set, cleaned and patched. You feel almost new."
+                })
+            }
+            Building.DEPOT -> {
+                val fuel = TownServices.fuelCost(st)
+                val hull = TownServices.hullCost(st)
+                rows.add(MenuRow(if (fuel <= 0) "Your tanks are full." else "Refuel the ship   $fuel credits to fill (or as much as you can afford)", fuel > 0 && st.credits > 0) {
+                    val added = TownServices.refuel(state)
+                    townNote = if (added > 0f) "Fuel tanks topped up by ${added.toInt()}%." else "You can't afford any fuel."
+                })
+                rows.add(MenuRow(if (hull <= 0) "Your hull is sound." else "Repair the hull   $hull credits to fix (or as much as you can afford)", hull > 0 && st.credits > 0) {
+                    val added = TownServices.repair(state)
+                    townNote = if (added > 0f) "Hull patched by ${added.toInt()}%." else "You can't afford any repairs."
+                })
+            }
+        }
+        townNote?.let { note -> for (l in wrapText(note, 66)) rows.add(MenuRow(l, false)) }
+        rows.add(MenuRow("Leave") { closeTown() })
+        return rows
     }
 
     /** Log a signal: it goes into the journal and the data is worth a few credits. */
@@ -375,6 +538,7 @@ class SurfaceScreen(
         shapes.dispose()
         batch.dispose()
         font.dispose()
+        worldFont.dispose()
     }
 
     private companion object {

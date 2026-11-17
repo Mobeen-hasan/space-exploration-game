@@ -4,6 +4,7 @@ import com.badlogic.gdx.graphics.Color
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
@@ -31,6 +32,7 @@ class Terrain(val planet: Planet) {
     val soilColor: Color
 
     private val table = FloatArray(TABLE_SIZE + 1)
+    private val hasTown = Towns.hasTown(planet)
 
     init {
         val p = profileFor(planet.type)
@@ -61,7 +63,8 @@ class Terrain(val planet: Planet) {
                 val ridge = 1f - 2f * abs(s) + 0.27f
                 raw += amps[k] * ((1f - p.ridged) * s + p.ridged * ridge)
             }
-            val d = min(min(x, WIDTH - x), abs(x - ENTRANCE_X)) // distance to the nearest flat pad
+            var d = min(min(x, WIDTH - x), abs(x - ENTRANCE_X)) // distance to the nearest flat pad
+            if (hasTown) d = min(d, max(0f, abs(x - Towns.TOWN_X) - (Towns.HALF_WIDTH - PAD_FLAT))) // the town's wider ground
             val blend = smoothstep(PAD_FLAT, PAD_BLEND, d)
             table[i] = raw * blend
         }

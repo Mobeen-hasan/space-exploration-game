@@ -113,3 +113,19 @@ class OverlayMenu(private val title: String) {
         batch.end()
     }
 }
+
+/** Splits [text] into lines of at most about [width] characters, breaking between words. */
+fun wrapText(text: String, width: Int): List<String> {
+    val lines = ArrayList<String>()
+    var line = StringBuilder()
+    for (word in text.split(" ")) {
+        if (line.isNotEmpty() && line.length + 1 + word.length > width) {
+            lines.add(line.toString())
+            line = StringBuilder()
+        }
+        if (line.isNotEmpty()) line.append(' ')
+        line.append(word)
+    }
+    if (line.isNotEmpty()) lines.add(line.toString())
+    return lines
+}

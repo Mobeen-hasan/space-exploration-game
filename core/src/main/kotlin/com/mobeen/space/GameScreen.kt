@@ -394,7 +394,12 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             val py = if (clamped) cy + dy / d * edge else cy + dy
             val a = if (clamped) 0.45f else 1f
             if (p.id == targetId) shapes.setColor(1f, 0.8f, 0.25f, a) else shapes.setColor(p.c1.r, p.c1.g, p.c1.b, a)
-            shapes.circle(px, py, if (clamped) 3.5f else max(3f, p.radius * scale), 16)
+            val pr = if (clamped) 3.5f else max(3f, p.radius * scale)
+            shapes.circle(px, py, pr, 16)
+            if (!clamped && Towns.hasTown(p)) { // an orange light: a settlement
+                shapes.setColor(1f, 0.6f, 0.2f, 1f)
+                shapes.rect(px + pr * 0.7f, py + pr * 0.7f, 3f, 3f)
+            }
         }
 
         // Ship marker, pointing along the heading
