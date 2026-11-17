@@ -33,6 +33,10 @@ class Ship {
 
     val landAngleRad get() = landAngle
 
+    /** Engine upgrades: multiply thrust and top speed. Set by the game from [ShipUpgrades]. */
+    var thrustScale = 1f
+    var speedScale = 1f
+
     /** [thrustEnabled] is false when the ship is out of fuel or wrecked. */
     fun update(c: Controls, dt: Float, thrustEnabled: Boolean = true) {
         if (noLandTimer > 0f) noLandTimer -= dt
@@ -60,12 +64,13 @@ class Ship {
         // Engine
         thrusting = thrustInput
         if (thrusting > 0f) {
-            vel.add(headingX * THRUST * thrusting * dt, headingY * THRUST * thrusting * dt)
+            vel.add(headingX * THRUST * thrustScale * thrusting * dt, headingY * THRUST * thrustScale * thrusting * dt)
         }
         if (c.brake) {
             vel.scl(exp(-BRAKE_DAMPING * dt))
         }
-        if (vel.len2() > MAX_SPEED * MAX_SPEED) vel.setLength(MAX_SPEED)
+        val top = MAX_SPEED * speedScale
+        if (vel.len2() > top * top) vel.setLength(top)
 
         pos.add(vel.x * dt, vel.y * dt)
     }

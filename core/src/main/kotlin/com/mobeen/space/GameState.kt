@@ -18,6 +18,12 @@ class GameState {
     /** Equipped gear and spare gear, kept between trips. */
     val loadout = Loadout()
 
+    /** Ship improvements bought at town fuel depots. */
+    val upgrades = ShipUpgrades()
+
+    /** How many supplies the ship's locker holds. */
+    val lockerSize: Int get() = LOCKER_SIZE + upgrades.extraLocker
+
     /**
      * Supplies waiting on the ship. They go into your pack when you enter the ruins, and whatever you bring
      * back out returns here. A new game starts with a small kit.
@@ -69,6 +75,7 @@ class GameState {
         discovered.clear()
         charted.clear()
         scanned.clear()
+        upgrades.reset()
         bounties.reset(keepRecord = false)
         clock = 0f
         hardcore = hardcoreMode

@@ -397,7 +397,7 @@ class DungeonRun(
      */
     fun settleOnExit() {
         if (completed && contract != null) state.bounties.markCaptured(contract)
-        for (t in pack) if (state.locker.size < GameState.LOCKER_SIZE) state.locker.add(t)
+        for (t in pack) if (state.locker.size < state.lockerSize) state.locker.add(t)
         pack.clear()
     }
 

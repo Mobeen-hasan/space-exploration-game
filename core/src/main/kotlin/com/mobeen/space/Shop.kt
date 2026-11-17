@@ -15,7 +15,7 @@ object Shop {
 
     fun canBuy(state: GameState, type: ItemType): Boolean {
         val price = prices[type] ?: return false
-        return state.stats.credits >= price && state.locker.size < GameState.LOCKER_SIZE
+        return state.stats.credits >= price && state.locker.size < state.lockerSize
     }
 
     fun buy(state: GameState, type: ItemType): Boolean {

@@ -43,6 +43,7 @@ object SaveCodec {
             "loadout" to s.loadout.encode(),
             "hardcore" to s.hardcore.toString(),
             "locker" to s.locker.joinToString(",") { it.name },
+            "upgrades" to s.upgrades.encode(),
         )
     }
 
@@ -85,6 +86,7 @@ object SaveCodec {
                 m["bountyCaptured"] == "true",
             )
             m["loadout"]?.let { s.loadout.restore(it) }
+            s.upgrades.restore(m["upgrades"] ?: "")
             s.hardcore = m["hardcore"] == "true"
             m["locker"]?.let { text ->
                 s.locker.clear()

@@ -120,7 +120,7 @@ class GearTest {
         assertEquals(listOf(ItemType.MEDKIT), s.locker)
         assertFalse(Shop.buy(s, ItemType.CREDITS), "not for sale")
         repeat(10) { Shop.buy(s, ItemType.RATION) }
-        assertEquals(GameState.LOCKER_SIZE, s.locker.size)
+        assertEquals(s.lockerSize, s.locker.size)
         assertFalse(Shop.canBuy(s, ItemType.RATION))
         s.locker.clear()
         s.stats.credits = 5

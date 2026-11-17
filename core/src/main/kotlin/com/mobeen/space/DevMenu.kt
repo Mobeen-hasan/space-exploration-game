@@ -187,6 +187,7 @@ class DevMenu {
                 DevOption("Add a fine or rare piece of gear to your bag") {
                     if (state.loadout.bag.size < Loadout.BAG_SIZE) state.loadout.bag.add(Loot.rollTrophy(kotlin.random.Random.Default))
                 },
+                DevOption("Max out every ship upgrade") { state.upgrades.maxAll() },
                 DevOption("Advance time by 1 minute (planet day and night)") { state.clock += 60f },
                 DevOption("Start a new day (fresh bounty contracts)") {
                     s.day += 1

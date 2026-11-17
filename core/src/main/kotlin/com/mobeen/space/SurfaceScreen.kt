@@ -488,6 +488,19 @@ class SurfaceScreen(
                     val added = TownServices.repair(state)
                     townNote = if (added > 0f) "Hull patched by ${added.toInt()}%." else "You can't afford any repairs."
                 })
+                rows.add(MenuRow("SHIP UPGRADES, fitted by the depot's mechanics:", false))
+                val ups = state.upgrades
+                for (u in Upgrade.entries) {
+                    val lv = ups.level(u)
+                    val price = ups.cost(u)
+                    if (price == null) {
+                        rows.add(MenuRow("${u.label}  [MAX]  - ${u.blurb}", false))
+                        continue
+                    }
+                    rows.add(MenuRow("${u.label}  [$lv/${ShipUpgrades.MAX_LEVEL}]  - ${u.blurb}   $price credits", st.credits >= price) {
+                        if (ups.buy(state, u)) townNote = "${u.label} fitted: now level ${ups.level(u)} of ${ShipUpgrades.MAX_LEVEL}."
+                    })
+                }
             }
         }
         townNote?.let { note -> for (l in wrapText(note, 66)) rows.add(MenuRow(l, false)) }

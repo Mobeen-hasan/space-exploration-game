@@ -109,7 +109,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
             game.enterInterior(InteriorScreen.COCKPIT_SPAWN)
             return
         }
-        field.near(ship.pos.x, ship.pos.y, RADAR_RANGE, nearby)
+        field.near(ship.pos.x, ship.pos.y, state.upgrades.radarRange, nearby)
         for (p in nearby) state.charted.add(p.id) // anything that shows up on radar goes on the star map
 
         accumulator += dt
@@ -152,7 +152,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         ship.land(p, 0f, 1f)
         discovered.add(p.id)
         chase.snapTo(ship)
-        field.near(ship.pos.x, ship.pos.y, RADAR_RANGE, nearby)
+        field.near(ship.pos.x, ship.pos.y, state.upgrades.radarRange, nearby)
     }
 
     // ---------------------------------------------------------------- simulation
@@ -179,8 +179,10 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
                 else "Hull wrecked! Repair it at the ship terminal (press I).",
             )
         }
+        ship.thrustScale = state.upgrades.thrustScale
+        ship.speedScale = state.upgrades.speedScale
         ship.update(controls, dt, canThrust)
-        if (ship.thrusting > 0f && !stats.invulnerable) stats.fuel = max(0f, stats.fuel - Stats.FUEL_BURN * ship.thrusting * dt)
+        if (ship.thrusting > 0f && !stats.invulnerable) stats.fuel = max(0f, stats.fuel - Stats.FUEL_BURN * state.upgrades.burnScale * ship.thrusting * dt)
         emitExhaust(dt)
         particles.update(dt)
 
@@ -204,7 +206,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
                     ship.vel.x -= 1.45f * vn * nx
                     ship.vel.y -= 1.45f * vn * ny
                     if (speed >= Ship.LAND_SPEED) {
-                        val damage = (speed - Ship.LAND_SPEED) * HULL_DAMAGE_PER_SPEED
+                        val damage = (speed - Ship.LAND_SPEED) * HULL_DAMAGE_PER_SPEED * state.upgrades.damageScale
                         if (!state.stats.invulnerable) state.stats.hull = max(0f, state.stats.hull - damage)
                         showToast("Hull damage! Brake below ${Ship.LAND_SPEED.toInt()} to land.")
                     }
@@ -378,7 +380,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val margin = s * 0.03f
         val cx = w - radius - margin
         val cy = h - radius - margin
-        val scale = radius / RADAR_RANGE
+        val scale = radius / state.upgrades.radarRange
         val targetId = state.bounties.hunting?.planetId
 
         shapes.setColor(0.03f, 0.07f, 0.12f, 0.6f)
@@ -540,7 +542,6 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
 
     private companion object {
         const val STEP = 1f / 120f
-        const val RADAR_RANGE = 5000f
         const val EXHAUST_RATE = 160f
         const val HULL_DAMAGE_PER_SPEED = 0.08f
         const val LIGHT_X = -0.55f

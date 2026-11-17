@@ -254,7 +254,7 @@ class InteriorScreen(
                 closeMenu()
                 game.journal.show()
             },
-            Option("Supply shop   (locker ${state.locker.size}/${GameState.LOCKER_SIZE})", true) {
+            Option("Supply shop   (locker ${state.locker.size}/${state.lockerSize})", true) {
                 menuPage = MenuPage.SHOP
                 menuSel = 0
             },
@@ -267,7 +267,7 @@ class InteriorScreen(
     }
 
     private fun lockerLine(): String =
-        "Locker (${state.locker.size}/${GameState.LOCKER_SIZE}): " +
+        "Locker (${state.locker.size}/${state.lockerSize}): " +
             (if (state.locker.isEmpty()) "empty" else state.locker.joinToString(", ") { it.label }) +
             ".\nIt all goes into your pack when you enter the ruins."
 
