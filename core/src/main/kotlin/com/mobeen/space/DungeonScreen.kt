@@ -95,7 +95,30 @@ class DungeonScreen(
         camera.position.set(camX, camY, 0f)
     }
 
+    private var heardDepth = -1
+    private var heardItems = -1
+
+    /** Sounds for what just happened: blows landed and taken, misses, healing, stairs and pickups. */
+    private fun playSounds() {
+        var hit = false
+        var hurt = false
+        for (f in run.floatTexts) when (f.kind) {
+            FloatText.HIT_MONSTER -> hit = true
+            FloatText.HIT_PLAYER -> hurt = true
+            FloatText.HEAL -> Sfx.play(SoundId.HEAL)
+            FloatText.INFO -> if (f.text == "miss") Sfx.play(SoundId.MISS)
+        }
+        if (hit) Sfx.play(SoundId.HIT)
+        if (hurt) Sfx.play(SoundId.HURT)
+        if (heardDepth >= 0 && run.depth != heardDepth) Sfx.play(SoundId.STAIRS)
+        heardDepth = run.depth
+        val items = run.pack.size + state.loadout.bag.size
+        if (heardItems >= 0 && items > heardItems) Sfx.play(SoundId.PICKUP)
+        heardItems = items
+    }
+
     override fun show() {
+        Sfx.music(Track.RUINS)
         state.pendingNotice?.let {
             toast = it
             toastTimer = 4f
@@ -421,6 +444,7 @@ class DungeonScreen(
         val shake = fray * 2.5f
         camera.position.set(camX + sin(time * 31f) * shake, camY + sin(time * 23f + 1f) * shake, 0f)
 
+        playSounds()
         for (f in run.floatTexts) floats.add(ActiveFloat(f.text, f.kind, f.x * TILE + TILE / 2f, f.y * TILE + TILE))
         run.floatTexts.clear()
         for (a in run.attacks) strikes.add(ActiveAttack(a))

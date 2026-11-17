@@ -34,6 +34,11 @@ class TitleScreen(
     private val menu = OverlayMenu("MAIN MENU")
 
     private var time = 0f
+    private var settingsOpen = false
+
+    override fun show() {
+        Sfx.music(Track.SPACE)
+    }
 
     /** Which new game (true = Hardcore) is waiting for a second press, because it would erase that mode's save. */
     private var confirming: Boolean? = null
@@ -50,6 +55,7 @@ class TitleScreen(
 
     private fun rows(): List<MenuRow> {
         if (epitaph != null) return listOf(MenuRow("Back to the main menu") { epitaph = null })
+        if (settingsOpen) return SettingsPage.rows(game.settings) { settingsOpen = false; menu.resetSelection() }
         val list = ArrayList<MenuRow>()
         normalSummary?.let { list.add(MenuRow("Continue Normal game   ($it)") { continueGame(false) }) }
         hardcoreSummary?.let { list.add(MenuRow("Continue Hardcore game   ($it)") { continueGame(true) }) }
@@ -62,6 +68,8 @@ class TitleScreen(
             } + if (existing != null && confirming != hc) "   - replaces your saved one" else ""
             list.add(MenuRow(label) { startNew(hc) })
         }
+        list.add(MenuRow("Settings") { settingsOpen = true; menu.resetSelection() })
+        list.add(MenuRow("Quit") { Gdx.app.exit() })
         return list
     }
 
@@ -87,6 +95,7 @@ class TitleScreen(
         menu.open = true // the title menu cannot be closed
         val rows = rows()
         menu.handle(w, h, rows)
+        if (!menu.open && settingsOpen) { settingsOpen = false; menu.resetSelection() } // Esc leaves the settings
         menu.open = true
 
         Gdx.gl.glClearColor(0.01f, 0.012f, 0.025f, 1f)

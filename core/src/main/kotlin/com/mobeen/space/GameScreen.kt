@@ -54,6 +54,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
     }
 
     override fun show() {
+        Sfx.music(Track.SPACE)
         chase.snapTo(ship)
         state.pendingNotice?.let {
             showToast(it)
@@ -74,6 +75,8 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         val w = Gdx.graphics.width.toFloat()
         val h = Gdx.graphics.height.toFloat()
 
+        val pausedNow = game.devMenu.open || game.journal.open || game.pauseMenu.open
+        if (pausedNow) Sfx.thrust(0f)
         if (game.devMenu.frame(game.devMode, w, h) { devOptions() }) { // paused while the developer menu is open
             drawFrame(w, h)
             return
@@ -182,6 +185,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
         ship.thrustScale = state.upgrades.thrustScale
         ship.speedScale = state.upgrades.speedScale
         ship.update(controls, dt, canThrust)
+        Sfx.thrust(ship.thrusting)
         if (ship.thrusting > 0f && !stats.invulnerable) stats.fuel = max(0f, stats.fuel - Stats.FUEL_BURN * state.upgrades.burnScale * ship.thrusting * dt)
         emitExhaust(dt)
         particles.update(dt)
@@ -208,6 +212,7 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
                     if (speed >= Ship.LAND_SPEED) {
                         val damage = (speed - Ship.LAND_SPEED) * HULL_DAMAGE_PER_SPEED * state.upgrades.damageScale
                         if (!state.stats.invulnerable) state.stats.hull = max(0f, state.stats.hull - damage)
+                        Sfx.play(SoundId.CRASH, min(1f, 0.4f + damage / 20f))
                         showToast("Hull damage! Brake below ${Ship.LAND_SPEED.toInt()} to land.")
                     }
                 }
@@ -241,6 +246,8 @@ class GameScreen(private val game: SpaceGame, private val state: GameState) : Sc
     }
 
     private fun onLanded(p: Planet) {
+        Sfx.play(SoundId.LAND)
+        Sfx.thrust(0f)
         if (discovered.add(p.id)) showToast("New discovery: ${p.name}")
     }
 

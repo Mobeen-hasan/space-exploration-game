@@ -80,6 +80,7 @@ class InteriorScreen(
     }
 
     override fun show() {
+        Sfx.music(Track.SPACE)
         state.pendingNotice?.let {
             showToast(it, 5f)
             state.pendingNotice = null
@@ -374,7 +375,7 @@ class InteriorScreen(
         if (input.isKeyJustPressed(Input.Keys.UP) || input.isKeyJustPressed(Input.Keys.W)) menuSel = (menuSel + options.size - 1) % options.size
         if (input.isKeyJustPressed(Input.Keys.DOWN) || input.isKeyJustPressed(Input.Keys.S)) menuSel = (menuSel + 1) % options.size
         if (input.isKeyJustPressed(Input.Keys.ENTER) || input.isKeyJustPressed(Input.Keys.E)) {
-            options[menuSel].takeIf { it.enabled }?.run?.invoke()
+            options[menuSel].takeIf { it.enabled }?.let { Sfx.play(SoundId.CLICK); it.run.invoke() }
             return
         }
         if (input.justTouched()) {
@@ -384,7 +385,7 @@ class InteriorScreen(
                 val r = menuRow(w, h, i, options.size)
                 if (tx >= r[0] && tx <= r[0] + r[2] && ty >= r[1] && ty <= r[1] + r[3]) {
                     menuSel = i
-                    options[i].takeIf { it.enabled }?.run?.invoke()
+                    options[i].takeIf { it.enabled }?.let { Sfx.play(SoundId.CLICK); it.run.invoke() }
                     return
                 }
             }

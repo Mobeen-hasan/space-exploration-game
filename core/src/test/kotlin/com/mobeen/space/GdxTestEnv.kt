@@ -42,6 +42,8 @@ object GdxTestEnv {
                 "contains" -> store.containsKey(a[0] as String)
                 "get" -> HashMap(store)
                 "getString" -> (store[a[0] as String] as? String) ?: (a.getOrNull(1) as? String ?: "")
+                "getFloat" -> (store[a[0] as String] as? Float) ?: (a.getOrNull(1) as? Float ?: 0f)
+                "getBoolean" -> (store[a[0] as String] as? Boolean) ?: (a.getOrNull(1) as? Boolean ?: false)
                 "remove" -> { store.remove(a[0] as String); null }
                 "clear" -> { store.clear(); null }
                 else -> unhandled

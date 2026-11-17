@@ -11,8 +11,8 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer.ShapeType
 import com.badlogic.gdx.math.Matrix4
 import kotlin.math.min
 
-/** One line in an [OverlayMenu]. Disabled rows are shown but cannot be chosen. */
-class MenuRow(val label: String, val enabled: Boolean = true, val run: () -> Unit = {})
+/** One line in an [OverlayMenu]. Disabled rows are shown but cannot be chosen. [adjust] makes A/D change a value. */
+class MenuRow(val label: String, val enabled: Boolean = true, val adjust: ((Int) -> Unit)? = null, val run: () -> Unit = {})
 
 /**
  * A simple pop-up list drawn over a screen: W/S or arrows to move, E or Enter to choose, Esc to close,
@@ -23,6 +23,11 @@ class OverlayMenu(private val title: String) {
     private var sel = 0
     private var lineH = 20f
 
+    /** Put the highlight back on the first row, for when the rows are replaced by a different page. */
+    fun resetSelection() {
+        sel = 0
+    }
+
     fun handle(w: Float, h: Float, rows: List<MenuRow>) {
         if (!open || rows.isEmpty()) return
         val input = Gdx.input
@@ -31,10 +36,19 @@ class OverlayMenu(private val title: String) {
             return
         }
         if (sel >= rows.size || !rows[sel].enabled) sel = rows.indexOfFirst { it.enabled }.coerceAtLeast(0)
+        val before = sel
         if (input.isKeyJustPressed(Input.Keys.UP) || input.isKeyJustPressed(Input.Keys.W)) sel = step(rows, -1)
         if (input.isKeyJustPressed(Input.Keys.DOWN) || input.isKeyJustPressed(Input.Keys.S)) sel = step(rows, 1)
+        if (sel != before) Sfx.play(SoundId.CLICK, 0.35f)
+        rows.getOrNull(sel)?.takeIf { it.enabled }?.adjust?.let { adjust ->
+            if (input.isKeyJustPressed(Input.Keys.LEFT) || input.isKeyJustPressed(Input.Keys.A)) adjust(-1)
+            if (input.isKeyJustPressed(Input.Keys.RIGHT) || input.isKeyJustPressed(Input.Keys.D)) adjust(1)
+        }
         if (input.isKeyJustPressed(Input.Keys.ENTER) || input.isKeyJustPressed(Input.Keys.E)) {
-            rows.getOrNull(sel)?.takeIf { it.enabled }?.run?.invoke()
+            rows.getOrNull(sel)?.takeIf { it.enabled }?.let {
+                Sfx.play(SoundId.CLICK)
+                it.run.invoke()
+            }
             return
         }
         if (input.justTouched()) {
@@ -44,6 +58,7 @@ class OverlayMenu(private val title: String) {
                 val r = rowRect(w, h, i, rows.size)
                 if (tx >= r[0] && tx <= r[0] + r[2] && ty >= r[1] && ty <= r[1] + r[3] && rows[i].enabled) {
                     sel = i
+                    Sfx.play(SoundId.CLICK)
                     rows[i].run()
                     return
                 }

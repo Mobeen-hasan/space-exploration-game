@@ -11,8 +11,10 @@ import com.badlogic.gdx.Screen
  */
 class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean = true) : Game() {
     val state = GameState()
+    val settings = Settings()
+    val audio = Audio(settings)
     val devMenu = DevMenu()
-    val pauseMenu = PauseMenu()
+    val pauseMenu = PauseMenu(settings)
     val journal = JournalOverlay()
     private lateinit var space: GameScreen
     private var transient: Screen? = null // the surface or interior screen currently in use
@@ -22,7 +24,14 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
     var inGame = false
         private set
 
+    /** Credits last frame, to chime when money comes in or goes out. -1 when not playing. */
+    private var lastCredits = -1
+
     override fun create() {
+        settings.load()
+        if (settings.fullscreen) settings.applyDisplay()
+        audio.load()
+        Sfx.audio = audio
         SaveStore.migrate()
         space = GameScreen(this, state)
         if (startOnTitle) {
@@ -73,12 +82,26 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
         old?.dispose()
     }
 
+    override fun render() {
+        super.render()
+        val c = state.stats.credits
+        if (inGame && lastCredits >= 0) {
+            if (c > lastCredits) Sfx.play(SoundId.COIN) else if (c < lastCredits) Sfx.play(SoundId.BUY)
+        }
+        lastCredits = if (inGame) c else -1
+        audio.update(Gdx.graphics.deltaTime)
+    }
+
     fun returnToSpace() = requestSwitch { space }
 
-    fun enterSurface(planet: Planet, spawnX: Float = 55f) = requestSwitch { SurfaceScreen(this, state, planet, spawnX) }
+    fun enterSurface(planet: Planet, spawnX: Float = 55f) = requestSwitch {
+        Sfx.play(SoundId.DOOR)
+        SurfaceScreen(this, state, planet, spawnX)
+    }
 
     /** Go down into the planet's ruins, continuing the current expedition if there is one. */
     fun enterDungeon(planet: Planet) = requestSwitch {
+        Sfx.play(SoundId.STAIRS)
         val existing = state.dungeon
         val run = if (existing != null && existing.planet.id == planet.id && !existing.exited && !existing.dead) {
             existing
@@ -91,7 +114,10 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
         DungeonScreen(this, state, run)
     }
 
-    fun enterInterior(spawnX: Float) = requestSwitch { InteriorScreen(this, state, spawnX) }
+    fun enterInterior(spawnX: Float) = requestSwitch {
+        Sfx.play(SoundId.DOOR)
+        InteriorScreen(this, state, spawnX)
+    }
 
     /**
      * The player passed out or died. In Normal mode: apply the penalty and wake them in the ship's bunk.
@@ -99,6 +125,8 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
      */
     fun collapse() {
         if (pendingSwitch != null) return
+        Sfx.play(SoundId.COLLAPSE)
+        lastCredits = -1 // the lost credits get no chime
         if (state.hardcore) {
             val epitaph = state.hardcoreEpitaph(state.stats.collapseReason())
             SaveStore.delete(hardcore = true) // one life: there is nothing to reload
@@ -113,6 +141,8 @@ class SpaceGame(val devMode: Boolean = false, private val startOnTitle: Boolean 
 
     override fun dispose() {
         if (inGame) SaveStore.save(state)
+        Sfx.audio = null
+        audio.dispose()
         super.dispose()
         space.dispose()
         transient?.dispose()

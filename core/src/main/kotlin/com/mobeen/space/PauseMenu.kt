@@ -14,18 +14,26 @@ import com.badlogic.gdx.math.Matrix4
  * Pause the game and, if you like, save and go back to the main menu. Opened with Esc or the MENU tab
  * at the top of the screen. Screens pass [blocked] while one of their own menus is using Esc.
  */
-class PauseMenu {
+class PauseMenu(private val settings: Settings = Settings()) {
     private val menu = OverlayMenu("PAUSED")
     val open: Boolean get() = menu.open
 
+    /** True while the settings page is showing instead of the main pause list. */
+    var inSettings = false
+        private set
+
     fun close() {
         menu.open = false
+        inSettings = false
     }
 
     private fun tabRect(w: Float, h: Float) = floatArrayOf(w / 2f - 112f, h - 24f, 70f, 22f)
 
-    private fun rows(exitLabel: String, onExit: () -> Unit) = listOf(
+    private fun rows(exitLabel: String, onExit: () -> Unit): List<MenuRow> = if (inSettings) {
+        SettingsPage.rows(settings) { inSettings = false; menu.resetSelection() }
+    } else listOf(
         MenuRow("Resume") { menu.open = false },
+        MenuRow("Settings") { inSettings = true; menu.resetSelection() },
         MenuRow(exitLabel) {
             menu.open = false
             onExit()
@@ -44,7 +52,11 @@ class PauseMenu {
             if (tx >= b[0] && tx <= b[0] + b[2] && ty >= b[1] && ty <= b[1] + b[3]) toggled = true
         }
         if (toggled) {
-            menu.open = !menu.open
+            if (menu.open && inSettings) { inSettings = false; menu.resetSelection() } // Esc steps back out of the settings first
+            else {
+                menu.open = !menu.open
+                inSettings = false
+            }
             return true // this frame's key press is used up
         }
         if (!menu.open) return false

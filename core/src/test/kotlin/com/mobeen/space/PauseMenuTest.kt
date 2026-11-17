@@ -31,6 +31,7 @@ class PauseMenuTest {
         h.frame(3)
         h.state.stats.credits = 4321
         h.press(Keys.ESCAPE)
+        h.press(Keys.DOWN) // past Settings
         h.press(Keys.DOWN)
         h.press(Keys.ENTER) // "Save and exit to the main menu"
         h.frame(3)
@@ -53,6 +54,7 @@ class PauseMenuTest {
         h.state.resetForNewGame(true)
         h.state.stats.credits = 77
         h.press(Keys.ESCAPE)
+        h.press(Keys.DOWN) // past Settings
         h.press(Keys.DOWN)
         h.press(Keys.ENTER)
         h.frame(3)
@@ -72,6 +74,7 @@ class PauseMenuTest {
         h.frame(3)
         assertTrue(h.screen is DungeonScreen)
         h.press(Keys.ESCAPE)
+        h.press(Keys.DOWN) // past Settings
         h.press(Keys.DOWN)
         h.press(Keys.ENTER)
         h.frame(3)
@@ -109,6 +112,7 @@ class PauseMenuTest {
         h.press(Keys.ESCAPE)
         assertTrue(h.game.pauseMenu.open)
         h.frame(10)
+        h.press(Keys.DOWN) // past Settings
         h.press(Keys.DOWN)
         h.press(Keys.ENTER)
         h.frame(3)

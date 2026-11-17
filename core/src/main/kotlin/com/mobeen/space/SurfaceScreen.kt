@@ -76,6 +76,7 @@ class SurfaceScreen(
     }
 
     override fun show() {
+        Sfx.music(Track.SURFACE)
         state.pendingNotice?.let {
             toast = it
             toastTimer = 4f
@@ -147,7 +148,7 @@ class SurfaceScreen(
             when {
                 nearShip -> { game.enterInterior(InteriorScreen.AIRLOCK_SPAWN); return }
                 nearEntrance -> { game.enterDungeon(planet); return }
-                nearBuilding != null -> { openBuilding = nearBuilding; townNote = null }
+                nearBuilding != null -> { openBuilding = nearBuilding; townNote = null; Sfx.play(SoundId.DOOR, 0.6f) }
                 nearFolk != null -> talkingTo = nearFolk
                 nearSignal != null -> scan(nearSignal)
             }
@@ -510,6 +511,7 @@ class SurfaceScreen(
 
     /** Log a signal: it goes into the journal and the data is worth a few credits. */
     private fun scan(s: Signal) {
+        Sfx.play(SoundId.SCAN)
         if (!state.scanned.add(s.key)) return
         state.discovered.add(planet.id)
         state.stats.credits += s.reward
